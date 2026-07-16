@@ -109,14 +109,16 @@ class StreamManager {
     // FFmpeg reads WebM from stdin (browser canvas via MediaRecorder)
     // Adds a silent audio track since the canvas stream is video-only.
     const args = [
-      // Video input: WebM from browser via stdin
-      "-re",
+      // Video input: real-time WebM from browser MediaRecorder via stdin
+      // NOTE: no -re flag — that's for files, not real-time pipes
+      "-analyzeduration", "0",
+      "-probesize", "32",
       "-f", "webm",
       "-i", "pipe:0",
-      // Silent audio (canvas has no audio)
+      // Silent audio (canvas stream is video-only; audio handled separately)
       "-f", "lavfi",
-      "-i", "aevalsrc=0.05*sin(0):s=44100",
-      // Video encoding
+      "-i", "aevalsrc=0:s=44100",
+      // Video: transcode VP8→H264 for RTMP
       "-c:v", "libx264",
       "-preset", "veryfast",
       "-tune", "zerolatency",
@@ -124,7 +126,8 @@ class StreamManager {
       "-maxrate", "4500k",
       "-bufsize", "8000k",
       "-pix_fmt", "yuv420p",
-      "-g", "60",
+      "-g", "60",          // keyframe every 2s at 30fps
+      "-r", "30",          // force 30fps output
       // Audio encoding
       "-c:a", "aac",
       "-b:a", "128k",
@@ -146,7 +149,10 @@ class StreamManager {
       this.sessionBitrateSamples = [];
 
       this.process.stderr?.on("data", (data: Buffer) => {
-        this.parseFFmpegStats(data.toString());
+        const text = data.toString();
+        this.parseFFmpegStats(text);
+        // Log all FFmpeg output so errors are visible in server logs
+        logger.info({ ffmpeg: text.trim() }, "FFmpeg");
       });
 
       this.process.on("close", (code) => {
@@ -155,7 +161,7 @@ class StreamManager {
         if (this.stats.state !== "stopping") {
           this.stats.state = "error";
           this.stats.errorMessage = `FFmpeg exited with code ${code}`;
-          logger.error({ code }, "FFmpeg process exited unexpectedly");
+          logger.error({ code }, "FFmpeg process exited unexpectedly — check debug logs above for stderr");
         } else {
           this.stats.state = "idle";
         }
@@ -171,10 +177,17 @@ class StreamManager {
         this.emit();
       });
 
+      // Suppress EPIPE errors on stdin (FFmpeg can exit before ws closes)
+      this.process.stdin?.on("error", () => {});
+
       // Pipe incoming WebSocket binary data to FFmpeg stdin
       ws.on("message", (data: Buffer) => {
         if (this.process?.stdin?.writable) {
-          this.process.stdin.write(data);
+          try {
+            this.process.stdin.write(data);
+          } catch {
+            // ignore write errors if FFmpeg exited
+          }
         }
       });
 
