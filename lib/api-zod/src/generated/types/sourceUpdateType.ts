@@ -17,6 +17,7 @@ export const SourceUpdateType = {
   audio: 'audio',
   browser: 'browser',
   text: 'text',
+  color: 'color',
   qrcode: 'qrcode',
   clock: 'clock',
   countdown: 'countdown',

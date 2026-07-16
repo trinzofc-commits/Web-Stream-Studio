@@ -23,6 +23,7 @@ const sourceIcons: Record<string, any> = {
   audio: Music,
   browser: Globe,
   text: Type,
+  color: LayoutGrid,
   qrcode: QrCode,
   clock: Clock,
   countdown: Timer,
