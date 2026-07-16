@@ -75,13 +75,22 @@ export function useCanvasStream(sources: Source[], streamState: string | undefin
       const canvasStream = compositor.captureStream(30);
 
       // 3. Open binary WebSocket to backend BEFORE starting MediaRecorder
-      const ws = new WebSocket(getWsUrl('/api/ws?role=stream'));
+      const ws = new WebSocket(getWsUrl('/ws?role=stream'));
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
       await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => resolve();
-        ws.onerror = () => reject(new Error('WebSocket failed to connect'));
+        ws.onopen = () => {
+          console.log('[stream] WebSocket connected to', ws.url);
+          resolve();
+        };
+        ws.onerror = (e) => {
+          console.error('[stream] WebSocket error', e);
+          reject(new Error('WebSocket failed to connect'));
+        };
+        ws.onclose = (e) => {
+          console.warn('[stream] WebSocket closed before open', e.code, e.reason);
+        };
         setTimeout(() => reject(new Error('WebSocket timeout')), 8000);
       });
 

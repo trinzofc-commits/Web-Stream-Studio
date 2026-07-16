@@ -10,8 +10,9 @@ import { AudioMixer } from '@/components/panels/AudioMixer';
 import { SettingsModal } from '@/components/modals/SettingsModal';
 import { MediaLibraryModal } from '@/components/modals/MediaLibraryModal';
 import { StudioProvider, useStudio } from '@/context/StudioContext';
-import { useDeleteSource, useListSources, useCreateSource, getListSourcesQueryKey } from '@workspace/api-client-react';
+import { useDeleteSource, useListSources, useCreateSource, useGetStreamStatus, getListSourcesQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useCanvasStream } from '@/hooks/useCanvasStream';
 
 function StudioContent() {
   const {
@@ -31,6 +32,10 @@ function StudioContent() {
   const { data: sources = [] } = useListSources(activeSceneId!, {
     query: { enabled: !!activeSceneId },
   });
+
+  // Stream state — drives canvas capture + WebSocket → FFmpeg pipeline
+  const { data: streamStatus } = useGetStreamStatus({ query: { refetchInterval: 1000 } });
+  useCanvasStream(sources, streamStatus?.state);
 
   // Global keyboard shortcuts
   useEffect(() => {
