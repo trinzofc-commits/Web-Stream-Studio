@@ -3,20 +3,34 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Livestream Studio API - OBS-like web application
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: projects
+    description: Project management
+  - name: scenes
+    description: Scene management
+  - name: sources
+    description: Source management within scenes
+  - name: stream
+    description: Stream control and status
+  - name: output
+    description: Output configuration
+  - name: audio
+    description: Audio mixer configuration
+  - name: upload
+    description: Media file upload
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,13 +38,1065 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  # ── Projects ──────────────────────────────────────────────
+  /projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List all projects
+      responses:
+        "200":
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Create a new project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+
+  /projects/{id}:
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: Get a project by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Project found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateProject
+      tags: [projects]
+      summary: Update a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteProject
+      tags: [projects]
+      summary: Delete a project
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /projects/{id}/export:
+    get:
+      operationId: exportProject
+      tags: [projects]
+      summary: Export project as JSON
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Project JSON export
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectExport"
+        "404":
+          description: Not found
+
+  /projects/import:
+    post:
+      operationId: importProject
+      tags: [projects]
+      summary: Import project from JSON
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectExport"
+      responses:
+        "201":
+          description: Imported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+
+  # ── Scenes ────────────────────────────────────────────────
+  /projects/{projectId}/scenes:
+    get:
+      operationId: listScenes
+      tags: [scenes]
+      summary: List all scenes in a project
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of scenes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scene"
+    post:
+      operationId: createScene
+      tags: [scenes]
+      summary: Create a new scene
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SceneInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scene"
+
+  /scenes/{id}:
+    patch:
+      operationId: updateScene
+      tags: [scenes]
+      summary: Update a scene
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SceneUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scene"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteScene
+      tags: [scenes]
+      summary: Delete a scene
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /scenes/{id}/duplicate:
+    post:
+      operationId: duplicateScene
+      tags: [scenes]
+      summary: Duplicate a scene
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "201":
+          description: Duplicated scene
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scene"
+        "404":
+          description: Not found
+
+  /scenes/reorder:
+    post:
+      operationId: reorderScenes
+      tags: [scenes]
+      summary: Reorder scenes within a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SceneReorder"
+      responses:
+        "200":
+          description: Reordered
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scene"
+
+  # ── Sources ───────────────────────────────────────────────
+  /scenes/{sceneId}/sources:
+    get:
+      operationId: listSources
+      tags: [sources]
+      summary: List all sources in a scene
+      parameters:
+        - name: sceneId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of sources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Source"
+    post:
+      operationId: createSource
+      tags: [sources]
+      summary: Add a source to a scene
+      parameters:
+        - name: sceneId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Source"
+
+  /sources/{id}:
+    patch:
+      operationId: updateSource
+      tags: [sources]
+      summary: Update a source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Source"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteSource
+      tags: [sources]
+      summary: Delete a source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /sources/{id}/layer:
+    patch:
+      operationId: updateSourceLayer
+      tags: [sources]
+      summary: Update source layer (z-index)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LayerUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Source"
+
+  # ── Stream ────────────────────────────────────────────────
+  /stream/config:
+    get:
+      operationId: getStreamConfig
+      tags: [stream]
+      summary: Get stream configuration (RTMP URL + stream key)
+      responses:
+        "200":
+          description: Stream configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamConfig"
+    put:
+      operationId: saveStreamConfig
+      tags: [stream]
+      summary: Save stream configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StreamConfigInput"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamConfig"
+
+  /stream/start:
+    post:
+      operationId: startStream
+      tags: [stream]
+      summary: Start the livestream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StreamStartInput"
+      responses:
+        "200":
+          description: Stream started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamStatus"
+        "400":
+          description: Bad request
+
+  /stream/stop:
+    post:
+      operationId: stopStream
+      tags: [stream]
+      summary: Stop the livestream
+      responses:
+        "200":
+          description: Stream stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamStatus"
+
+  /stream/reconnect:
+    post:
+      operationId: reconnectStream
+      tags: [stream]
+      summary: Reconnect the livestream
+      responses:
+        "200":
+          description: Reconnecting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamStatus"
+
+  /stream/status:
+    get:
+      operationId: getStreamStatus
+      tags: [stream]
+      summary: Get current stream status and stats
+      responses:
+        "200":
+          description: Stream status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamStatus"
+
+  # ── Output Config ─────────────────────────────────────────
+  /output/config:
+    get:
+      operationId: getOutputConfig
+      tags: [output]
+      summary: Get output configuration
+      responses:
+        "200":
+          description: Output configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutputConfig"
+    put:
+      operationId: saveOutputConfig
+      tags: [output]
+      summary: Save output configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OutputConfigInput"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutputConfig"
+
+  # ── Audio ─────────────────────────────────────────────────
+  /audio/tracks:
+    get:
+      operationId: listAudioTracks
+      tags: [audio]
+      summary: List all audio tracks / mixer channels
+      responses:
+        "200":
+          description: List of audio tracks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AudioTrack"
+    post:
+      operationId: createAudioTrack
+      tags: [audio]
+      summary: Create an audio track
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AudioTrackInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudioTrack"
+
+  /audio/tracks/{id}:
+    patch:
+      operationId: updateAudioTrack
+      tags: [audio]
+      summary: Update audio track settings
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AudioTrackUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudioTrack"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteAudioTrack
+      tags: [audio]
+      summary: Delete audio track
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # ── Uploads ───────────────────────────────────────────────
+  /uploads:
+    get:
+      operationId: listUploads
+      tags: [upload]
+      summary: List all uploaded media assets
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [image, video, audio, overlay]
+      responses:
+        "200":
+          description: List of uploads
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MediaAsset"
+
+  /uploads/{id}:
+    delete:
+      operationId: deleteUpload
+      tags: [upload]
+      summary: Delete an uploaded asset
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  # ── Stats (wow endpoints) ──────────────────────────────────
+  /stream/stats/summary:
+    get:
+      operationId: getStreamStatsSummary
+      tags: [stream]
+      summary: Get aggregated stream stats (fps, bitrate, dropped frames, uptime)
+      responses:
+        "200":
+          description: Aggregated stream stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamStatsSummary"
+
 components:
   schemas:
     HealthStatus:
       type: object
+      required: [status]
       properties:
         status:
           type: string
-      required:
-        - status
 
+    # ── Project ──────────────────────────────────────────────
+    Project:
+      type: object
+      required: [id, name, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        activeSceneId:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    ProjectInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+
+    ProjectUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        activeSceneId:
+          type: ["integer", "null"]
+
+    ProjectExport:
+      type: object
+      required: [name, scenes]
+      properties:
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        scenes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Scene"
+        outputConfig:
+          $ref: "#/components/schemas/OutputConfig"
+        streamConfig:
+          $ref: "#/components/schemas/StreamConfig"
+
+    # ── Scene ─────────────────────────────────────────────────
+    Scene:
+      type: object
+      required: [id, projectId, name, sortOrder, createdAt]
+      properties:
+        id:
+          type: integer
+        projectId:
+          type: integer
+        name:
+          type: string
+        thumbnail:
+          type: ["string", "null"]
+        transitionType:
+          type: string
+          enum: [cut, fade, slide, swipe, zoom, dissolve]
+          default: fade
+        transitionDurationMs:
+          type: integer
+          default: 300
+        sortOrder:
+          type: integer
+        createdAt:
+          type: string
+
+    SceneInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        transitionType:
+          type: string
+          enum: [cut, fade, slide, swipe, zoom, dissolve]
+        transitionDurationMs:
+          type: integer
+
+    SceneUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        transitionType:
+          type: string
+          enum: [cut, fade, slide, swipe, zoom, dissolve]
+        transitionDurationMs:
+          type: integer
+        sortOrder:
+          type: integer
+
+    SceneReorder:
+      type: object
+      required: [projectId, sceneIds]
+      properties:
+        projectId:
+          type: integer
+        sceneIds:
+          type: array
+          items:
+            type: integer
+
+    # ── Source ────────────────────────────────────────────────
+    Source:
+      type: object
+      required: [id, sceneId, name, type, sortOrder, x, y, width, height, visible, locked, createdAt]
+      properties:
+        id:
+          type: integer
+        sceneId:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          enum: [camera, display, image, video, audio, browser, text, qrcode, clock, countdown, slideshow, videoPlaylist, audioPlaylist, pdf, logo, watermark]
+        settings:
+          type: object
+          description: JSON blob of type-specific settings
+          additionalProperties: true
+        x:
+          type: number
+        y:
+          type: number
+        width:
+          type: number
+        height:
+          type: number
+        rotation:
+          type: number
+          default: 0
+        opacity:
+          type: number
+          default: 1
+        visible:
+          type: boolean
+          default: true
+        locked:
+          type: boolean
+          default: false
+        sortOrder:
+          type: integer
+        createdAt:
+          type: string
+
+    SourceInput:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          enum: [camera, display, image, video, audio, browser, text, qrcode, clock, countdown, slideshow, videoPlaylist, audioPlaylist, pdf, logo, watermark]
+        settings:
+          type: object
+          additionalProperties: true
+        x:
+          type: number
+        y:
+          type: number
+        width:
+          type: number
+        height:
+          type: number
+        rotation:
+          type: number
+        opacity:
+          type: number
+
+    SourceUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [camera, display, image, video, audio, browser, text, qrcode, clock, countdown, slideshow, videoPlaylist, audioPlaylist, pdf, logo, watermark]
+        settings:
+          type: object
+          additionalProperties: true
+        x:
+          type: number
+        y:
+          type: number
+        width:
+          type: number
+        height:
+          type: number
+        rotation:
+          type: number
+        opacity:
+          type: number
+        visible:
+          type: boolean
+        locked:
+          type: boolean
+        sortOrder:
+          type: integer
+
+    LayerUpdate:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [bringToFront, bringForward, sendBackward, sendToBack]
+
+    # ── Stream ────────────────────────────────────────────────
+    StreamConfig:
+      type: object
+      required: [id, rtmpUrl, streamKey]
+      properties:
+        id:
+          type: integer
+        rtmpUrl:
+          type: string
+        streamKey:
+          type: string
+        platform:
+          type: string
+          enum: [facebook, youtube, twitch, custom]
+
+    StreamConfigInput:
+      type: object
+      required: [rtmpUrl, streamKey]
+      properties:
+        rtmpUrl:
+          type: string
+          minLength: 1
+        streamKey:
+          type: string
+          minLength: 1
+        platform:
+          type: string
+          enum: [facebook, youtube, twitch, custom]
+
+    StreamStartInput:
+      type: object
+      required: [rtmpUrl, streamKey]
+      properties:
+        rtmpUrl:
+          type: string
+          minLength: 1
+        streamKey:
+          type: string
+          minLength: 1
+
+    StreamStatus:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [idle, connecting, live, stopping, error, reconnecting]
+        fps:
+          type: ["number", "null"]
+        bitrate:
+          type: ["number", "null"]
+        droppedFrames:
+          type: ["integer", "null"]
+        totalFrames:
+          type: ["integer", "null"]
+        uptimeSeconds:
+          type: ["integer", "null"]
+        cpuUsage:
+          type: ["number", "null"]
+        memoryMb:
+          type: ["number", "null"]
+        networkKbps:
+          type: ["number", "null"]
+        errorMessage:
+          type: ["string", "null"]
+
+    StreamStatsSummary:
+      type: object
+      required: [totalSessions, avgFps, avgBitrate, totalUptimeSeconds]
+      properties:
+        totalSessions:
+          type: integer
+        avgFps:
+          type: number
+        avgBitrate:
+          type: number
+        totalUptimeSeconds:
+          type: integer
+        lastStreamAt:
+          type: ["string", "null"]
+
+    # ── Output Config ─────────────────────────────────────────
+    OutputConfig:
+      type: object
+      required: [id, resolution, fps, videoBitrate, audioBitrate, encoder]
+      properties:
+        id:
+          type: integer
+        resolution:
+          type: string
+          enum: ["720p", "1080p", "1440p", "4K"]
+        fps:
+          type: integer
+          enum: [24, 30, 60]
+        videoBitrate:
+          type: integer
+        audioBitrate:
+          type: integer
+        encoder:
+          type: string
+          enum: [H264, H265, VP9, AV1]
+        recordingEnabled:
+          type: boolean
+        recordingFormat:
+          type: string
+          enum: [mp4, mkv, mov]
+
+    OutputConfigInput:
+      type: object
+      required: [resolution, fps, videoBitrate, audioBitrate, encoder]
+      properties:
+        resolution:
+          type: string
+          enum: ["720p", "1080p", "1440p", "4K"]
+        fps:
+          type: integer
+          enum: [24, 30, 60]
+        videoBitrate:
+          type: integer
+        audioBitrate:
+          type: integer
+        encoder:
+          type: string
+          enum: [H264, H265, VP9, AV1]
+        recordingEnabled:
+          type: boolean
+        recordingFormat:
+          type: string
+          enum: [mp4, mkv, mov]
+
+    # ── Audio ─────────────────────────────────────────────────
+    AudioTrack:
+      type: object
+      required: [id, name, gain, volume, muted, solo]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        sourceId:
+          type: ["integer", "null"]
+        gain:
+          type: number
+        volume:
+          type: number
+        balance:
+          type: number
+        muted:
+          type: boolean
+        solo:
+          type: boolean
+        filters:
+          type: object
+          additionalProperties: true
+
+    AudioTrackInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        sourceId:
+          type: integer
+        gain:
+          type: number
+        volume:
+          type: number
+        balance:
+          type: number
+
+    AudioTrackUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        gain:
+          type: number
+        volume:
+          type: number
+        balance:
+          type: number
+        muted:
+          type: boolean
+        solo:
+          type: boolean
+        filters:
+          type: object
+          additionalProperties: true
+
+    # ── Media Assets ──────────────────────────────────────────
+    MediaAsset:
+      type: object
+      required: [id, filename, url, type, sizeBytes, createdAt]
+      properties:
+        id:
+          type: integer
+        filename:
+          type: string
+        url:
+          type: string
+        type:
+          type: string
+          enum: [image, video, audio, overlay]
+        mimeType:
+          type: string
+        sizeBytes:
+          type: integer
+        createdAt:
+          type: string
