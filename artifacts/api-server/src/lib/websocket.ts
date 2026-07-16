@@ -11,6 +11,17 @@ export function createWebSocketServer(server: import("http").Server) {
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     logger.info({ url: req.url }, "WebSocket client connected");
 
+    // Check if this is a browser stream client (canvas → FFmpeg pipe)
+    const url = new URL(req.url ?? "", "http://localhost");
+    const isStreamClient = url.searchParams.get("role") === "stream";
+
+    if (isStreamClient) {
+      // Hand off to stream manager which spawns FFmpeg and pipes binary data from this ws
+      streamManager.attachStreamClient(ws);
+      return;
+    }
+
+    // ── Control client ──────────────────────────────────────────────────────
     // Send current stream status immediately
     const stats = streamManager.getStats();
     ws.send(JSON.stringify({ type: "stream:status", data: stats }));
