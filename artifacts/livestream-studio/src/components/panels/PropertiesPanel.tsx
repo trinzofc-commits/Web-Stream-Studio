@@ -13,7 +13,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { FolderOpen, Plus, Minus } from 'lucide-react';
 
 interface Props {
-  onOpenMediaLibrary?: () => void;
+  onOpenMediaLibrary?: (onSelect: (url: string) => void) => void;
 }
 
 export function PropertiesPanel({ onOpenMediaLibrary }: Props) {
@@ -169,7 +169,7 @@ function SourceSettings({
   settings: Record<string, any>;
   onChange: (s: Record<string, any>) => void;
   onCommit: (patch: Record<string, any>) => void;
-  onOpenMediaLibrary?: () => void;
+  onOpenMediaLibrary?: (onSelect: (url: string) => void) => void;
 }) {
   const set = (key: string, value: any) => onChange({ ...settings, [key]: value });
   const commit = (key: string, value: any) => onCommit({ [key]: value });
@@ -601,7 +601,8 @@ function UrlFieldWithPicker({
   label, settingKey, settings, commit, onOpenLibrary,
 }: {
   label: string; settingKey: string; settings: Record<string, any>;
-  commit: (k: string, v: any) => void; onOpenLibrary?: () => void;
+  commit: (k: string, v: any) => void;
+  onOpenLibrary?: (onSelect: (url: string) => void) => void;
 }) {
   return (
     <div className="space-y-1">
@@ -609,7 +610,6 @@ function UrlFieldWithPicker({
       <div className="flex gap-1.5">
         <Input
           className="h-7 text-xs flex-1 font-mono"
-          value={settings[settingKey] ?? ''}
           onChange={(e) => {/* local only */}}
           onBlur={(e) => commit(settingKey, e.target.value)}
           placeholder="https://... or pick from library"
@@ -617,7 +617,11 @@ function UrlFieldWithPicker({
           key={settings[settingKey]}
         />
         {onOpenLibrary && (
-          <Button variant="outline" size="icon" className="h-7 w-7 shrink-0" onClick={onOpenLibrary} title="Pick from Media Library">
+          <Button
+            variant="outline" size="icon" className="h-7 w-7 shrink-0"
+            onClick={() => onOpenLibrary((url) => commit(settingKey, url))}
+            title="Pick from Media Library"
+          >
             <FolderOpen className="w-3.5 h-3.5" />
           </Button>
         )}
@@ -631,7 +635,7 @@ function UrlListSettings({
 }: {
   label: string; settingKey: string; settings: Record<string, any>;
   onCommit: (patch: Record<string, any>) => void;
-  onOpenLibrary?: () => void;
+  onOpenLibrary?: (onSelect: (url: string) => void) => void;
   children?: React.ReactNode;
 }) {
   const urls: string[] = settings[settingKey] ?? [];
@@ -652,6 +656,19 @@ function UrlListSettings({
                 update(next);
               }}
             />
+            {onOpenLibrary && (
+              <Button
+                variant="outline" size="icon" className="h-7 w-7 shrink-0"
+                onClick={() => onOpenLibrary((picked) => {
+                  const next = [...urls];
+                  next[i] = picked;
+                  update(next);
+                })}
+                title="Pick from Media Library"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -662,14 +679,25 @@ function UrlListSettings({
             </Button>
           </div>
         ))}
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full h-7 text-xs"
-          onClick={() => update([...urls, ''])}
-        >
-          <Plus className="w-3.5 h-3.5 mr-1.5" /> Add URL
-        </Button>
+        <div className="flex gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1 h-7 text-xs"
+            onClick={() => update([...urls, ''])}
+          >
+            <Plus className="w-3.5 h-3.5 mr-1.5" /> Add URL
+          </Button>
+          {onOpenLibrary && (
+            <Button
+              variant="outline" size="sm" className="h-7 text-xs"
+              onClick={() => onOpenLibrary((picked) => update([...urls, picked]))}
+              title="Add from Media Library"
+            >
+              <FolderOpen className="w-3.5 h-3.5 mr-1.5" /> Library
+            </Button>
+          )}
+        </div>
       </div>
       {children}
     </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { TopMenubar } from '@/components/layout/TopMenubar';
 import { BottomBar } from '@/components/layout/BottomBar';
@@ -37,6 +37,13 @@ function StudioContent() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false);
+  // When opened from PropertiesPanel, stores the callback that receives the picked URL
+  const mediaSelectCallbackRef = useRef<((url: string) => void) | null>(null);
+
+  const openMediaLibrary = (onSelect?: (url: string) => void) => {
+    mediaSelectCallbackRef.current = onSelect ?? null;
+    setMediaLibraryOpen(true);
+  };
 
   const queryClient = useQueryClient();
   const deleteSource = useDeleteSource();
@@ -124,7 +131,7 @@ function StudioContent() {
     <div className="h-screen w-full flex flex-col bg-background text-foreground overflow-hidden">
       <TopMenubar
         onSettingsOpen={() => setSettingsOpen(true)}
-        onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
+        onMediaLibraryOpen={() => openMediaLibrary()}
       />
 
       <div className="flex-1 flex overflow-hidden min-h-0">
@@ -153,7 +160,7 @@ function StudioContent() {
 
           {/* RIGHT — Properties */}
           <ResizablePanel defaultSize={20} minSize={14} maxSize={32}>
-            <PropertiesPanel onOpenMediaLibrary={() => setMediaLibraryOpen(true)} />
+            <PropertiesPanel onOpenMediaLibrary={openMediaLibrary} />
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
@@ -167,7 +174,18 @@ function StudioContent() {
       </div>
 
       <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
-      <MediaLibraryModal open={mediaLibraryOpen} onOpenChange={setMediaLibraryOpen} />
+      <MediaLibraryModal
+        open={mediaLibraryOpen}
+        onOpenChange={(v) => {
+          if (!v) mediaSelectCallbackRef.current = null;
+          setMediaLibraryOpen(v);
+        }}
+        onSelect={mediaSelectCallbackRef.current ? (asset) => {
+          mediaSelectCallbackRef.current?.(asset.url);
+          mediaSelectCallbackRef.current = null;
+          setMediaLibraryOpen(false);
+        } : undefined}
+      />
     </div>
   );
 }
