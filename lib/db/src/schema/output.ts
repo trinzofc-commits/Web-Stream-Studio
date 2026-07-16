@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 export const outputConfigTable = pgTable("output_config", {
   id: serial("id").primaryKey(),
   resolution: text("resolution").notNull().default("1080p"),
+  aspectRatio: text("aspect_ratio").notNull().default("landscape"),
   fps: integer("fps").notNull().default(30),
   videoBitrate: integer("video_bitrate").notNull().default(4000),
   audioBitrate: integer("audio_bitrate").notNull().default(128),

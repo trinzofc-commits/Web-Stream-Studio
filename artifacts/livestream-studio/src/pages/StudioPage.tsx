@@ -10,9 +10,21 @@ import { AudioMixer } from '@/components/panels/AudioMixer';
 import { SettingsModal } from '@/components/modals/SettingsModal';
 import { MediaLibraryModal } from '@/components/modals/MediaLibraryModal';
 import { StudioProvider, useStudio } from '@/context/StudioContext';
-import { useDeleteSource, useListSources, useCreateSource, useGetStreamStatus, getListSourcesQueryKey } from '@workspace/api-client-react';
+import { useDeleteSource, useListSources, useCreateSource, useGetStreamStatus, useGetOutputConfig, getListSourcesQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCanvasStream } from '@/hooks/useCanvasStream';
+
+const RESOLUTION_BASE: Record<string, [number, number]> = {
+  '720p':  [1280, 720],
+  '1080p': [1920, 1080],
+  '1440p': [2560, 1440],
+  '4K':    [3840, 2160],
+};
+
+function getCanvasDimensions(resolution: string, aspectRatio: string): [number, number] {
+  const [w, h] = RESOLUTION_BASE[resolution] ?? [1920, 1080];
+  return aspectRatio === 'portrait' ? [h, w] : [w, h];
+}
 
 function StudioContent() {
   const {
@@ -35,7 +47,12 @@ function StudioContent() {
 
   // Stream state — drives canvas capture + WebSocket → FFmpeg pipeline
   const { data: streamStatus } = useGetStreamStatus({ query: { refetchInterval: 1000 } });
-  useCanvasStream(sources, streamStatus?.state);
+  const { data: outputConfig } = useGetOutputConfig();
+  const [canvasW, canvasH] = getCanvasDimensions(
+    outputConfig?.resolution ?? '1080p',
+    (outputConfig as any)?.aspectRatio ?? 'landscape',
+  );
+  useCanvasStream(sources, streamStatus?.state, canvasW, canvasH);
 
   // Global keyboard shortcuts
   useEffect(() => {

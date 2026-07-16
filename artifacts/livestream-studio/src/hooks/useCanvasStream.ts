@@ -35,7 +35,12 @@ function getBestMimeType(): string {
   return candidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
 }
 
-export function useCanvasStream(sources: Source[], streamState: string | undefined) {
+export function useCanvasStream(
+  sources: Source[],
+  streamState: string | undefined,
+  canvasWidth: number,
+  canvasHeight: number,
+) {
   const compositorRef = useRef<StreamCompositor | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -60,13 +65,13 @@ export function useCanvasStream(sources: Source[], streamState: string | undefin
     compositorRef.current = null;
   }, []);
 
-  const startStream = useCallback(async (currentSources: Source[]) => {
+  const startStream = useCallback(async (currentSources: Source[], w: number, h: number) => {
     if (isStreamingRef.current) return;
     isStreamingRef.current = true;
 
     try {
-      // 1. Build compositor and start rendering
-      const compositor = new StreamCompositor();
+      // 1. Build compositor with correct canvas dimensions and start rendering
+      const compositor = new StreamCompositor(w, h);
       compositor.updateSources(currentSources);
       compositor.start();
       compositorRef.current = compositor;
@@ -94,7 +99,7 @@ export function useCanvasStream(sources: Source[], streamState: string | undefin
         setTimeout(() => reject(new Error('WebSocket timeout')), 8000);
       });
 
-      // 4. Create MediaRecorder and wire data→WebSocket
+      // 4. Create MediaRecorder and wire data → WebSocket
       const mimeType = getBestMimeType();
       const recorder = new MediaRecorder(canvasStream, {
         mimeType,
@@ -127,11 +132,15 @@ export function useCanvasStream(sources: Source[], streamState: string | undefin
   // React to stream state changes
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
+  const wRef = useRef(canvasWidth);
+  wRef.current = canvasWidth;
+  const hRef = useRef(canvasHeight);
+  hRef.current = canvasHeight;
 
   useEffect(() => {
     const active = streamState === 'connecting' || streamState === 'live';
     if (active && !isStreamingRef.current) {
-      startStream(sourcesRef.current);
+      startStream(sourcesRef.current, wRef.current, hRef.current);
     } else if (!active && isStreamingRef.current) {
       stopStream();
     }

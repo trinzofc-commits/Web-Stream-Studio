@@ -619,6 +619,7 @@ export const GetStreamStatusResponse = zod.object({
 export const GetOutputConfigResponse = zod.object({
   "id": zod.number(),
   "resolution": zod.enum(['720p', '1080p', '1440p', '4K']),
+  "aspectRatio": zod.enum(['landscape', 'portrait']).optional(),
   "fps": zod.union([zod.literal(24),zod.literal(30),zod.literal(60)]),
   "videoBitrate": zod.number(),
   "audioBitrate": zod.number(),
@@ -633,6 +634,7 @@ export const GetOutputConfigResponse = zod.object({
  */
 export const SaveOutputConfigBody = zod.object({
   "resolution": zod.enum(['720p', '1080p', '1440p', '4K']),
+  "aspectRatio": zod.enum(['landscape', 'portrait']).optional(),
   "fps": zod.union([zod.literal(24),zod.literal(30),zod.literal(60)]),
   "videoBitrate": zod.number(),
   "audioBitrate": zod.number(),
@@ -644,6 +646,7 @@ export const SaveOutputConfigBody = zod.object({
 export const SaveOutputConfigResponse = zod.object({
   "id": zod.number(),
   "resolution": zod.enum(['720p', '1080p', '1440p', '4K']),
+  "aspectRatio": zod.enum(['landscape', 'portrait']).optional(),
   "fps": zod.union([zod.literal(24),zod.literal(30),zod.literal(60)]),
   "videoBitrate": zod.number(),
   "audioBitrate": zod.number(),

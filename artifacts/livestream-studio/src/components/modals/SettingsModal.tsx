@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Monitor, Smartphone } from 'lucide-react';
 import {
   useGetStreamConfig, useSaveStreamConfig,
   useGetOutputConfig, useSaveOutputConfig,
@@ -43,6 +43,7 @@ export function SettingsModal({ open, onOpenChange }: Props) {
   });
   const [outputData, setOutputData] = useState({
     resolution: '1080p',
+    aspectRatio: 'landscape' as 'landscape' | 'portrait',
     fps: 30,
     videoBitrate: 4000,
     audioBitrate: 128,
@@ -66,6 +67,7 @@ export function SettingsModal({ open, onOpenChange }: Props) {
     if (outputConfig) {
       setOutputData({
         resolution: (outputConfig as any).resolution ?? '1080p',
+        aspectRatio: ((outputConfig as any).aspectRatio ?? 'landscape') as 'landscape' | 'portrait',
         fps: outputConfig.fps ?? 30,
         videoBitrate: outputConfig.videoBitrate ?? 4000,
         audioBitrate: outputConfig.audioBitrate ?? 128,
@@ -261,6 +263,31 @@ export function SettingsModal({ open, onOpenChange }: Props) {
               {/* VIDEO */}
               <TabsContent value="video" className="mt-0 space-y-5">
                 <h3 className="font-semibold text-base border-b border-border pb-2">Video Settings</h3>
+                <Row label="Orientation">
+                  <div className="flex gap-2">
+                    {(['landscape', 'portrait'] as const).map((ar) => {
+                      const isActive = outputData.aspectRatio === ar;
+                      return (
+                        <button
+                          key={ar}
+                          type="button"
+                          onClick={() => setOutputData({ ...outputData, aspectRatio: ar })}
+                          className={`flex flex-col items-center gap-1.5 px-4 py-2 rounded border text-xs font-medium transition-colors ${
+                            isActive
+                              ? 'border-primary bg-primary/15 text-primary'
+                              : 'border-border bg-background text-muted-foreground hover:border-muted-foreground'
+                          }`}
+                        >
+                          {ar === 'landscape'
+                            ? <Monitor className="w-5 h-5" />
+                            : <Smartphone className="w-5 h-5" />}
+                          <span className="capitalize">{ar}</span>
+                          <span className="text-[10px] opacity-70">{ar === 'landscape' ? '16:9' : '9:16'}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Row>
                 <Row label="Canvas Resolution">
                   <Select
                     value={outputData.resolution}
@@ -268,10 +295,21 @@ export function SettingsModal({ open, onOpenChange }: Props) {
                   >
                     <SelectTrigger className="w-48 h-8 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="720p">1280×720 (720p)</SelectItem>
-                      <SelectItem value="1080p">1920×1080 (1080p)</SelectItem>
-                      <SelectItem value="1440p">2560×1440 (1440p)</SelectItem>
-                      <SelectItem value="4K">3840×2160 (4K)</SelectItem>
+                      {outputData.aspectRatio === 'portrait' ? (
+                        <>
+                          <SelectItem value="720p">720×1280 (720p)</SelectItem>
+                          <SelectItem value="1080p">1080×1920 (1080p)</SelectItem>
+                          <SelectItem value="1440p">1440×2560 (1440p)</SelectItem>
+                          <SelectItem value="4K">2160×3840 (4K)</SelectItem>
+                        </>
+                      ) : (
+                        <>
+                          <SelectItem value="720p">1280×720 (720p)</SelectItem>
+                          <SelectItem value="1080p">1920×1080 (1080p)</SelectItem>
+                          <SelectItem value="1440p">2560×1440 (1440p)</SelectItem>
+                          <SelectItem value="4K">3840×2160 (4K)</SelectItem>
+                        </>
+                      )}
                     </SelectContent>
                   </Select>
                 </Row>

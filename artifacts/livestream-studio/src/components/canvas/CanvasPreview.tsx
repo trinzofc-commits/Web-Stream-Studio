@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useStudio } from '@/context/StudioContext';
-import { useListSources, useUpdateSource, getListSourcesQueryKey } from '@workspace/api-client-react';
+import { useListSources, useUpdateSource, useGetOutputConfig, getListSourcesQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,13 @@ const HANDLES: { dir: HandleDir; style: React.CSSProperties }[] = [
 
 const MIN_SIZE = 10;
 
+const RESOLUTION_BASE: Record<string, [number, number]> = {
+  '720p':  [1280, 720],
+  '1080p': [1920, 1080],
+  '1440p': [2560, 1440],
+  '4K':    [3840, 2160],
+};
+
 export function CanvasPreview() {
   const { activeSceneId, activeSourceId, setActiveSourceId } = useStudio();
   const queryClient = useQueryClient();
@@ -40,26 +47,33 @@ export function CanvasPreview() {
   const { data: sources = [] } = useListSources(activeSceneId!, {
     query: { enabled: !!activeSceneId },
   });
+  const { data: outputConfig } = useGetOutputConfig();
 
   const updateSource = useUpdateSource();
 
   const [scale, setScale] = useState(1);
   const [gridVisible, setGridVisible] = useState(false);
 
+  const resolution = (outputConfig as any)?.resolution ?? '1080p';
+  const aspectRatio = (outputConfig as any)?.aspectRatio ?? 'landscape';
+  const [baseW, baseH] = RESOLUTION_BASE[resolution] ?? [1920, 1080];
+  const canvasW = aspectRatio === 'portrait' ? baseH : baseW;
+  const canvasH = aspectRatio === 'portrait' ? baseW : baseH;
+
   useEffect(() => {
     const fitCanvas = () => {
       if (!containerRef.current) return;
       const { width, height } = containerRef.current.getBoundingClientRect();
       const pad = 32;
-      const scaleW = (width - pad) / 1280;
-      const scaleH = (height - pad) / 720;
+      const scaleW = (width - pad) / canvasW;
+      const scaleH = (height - pad) / canvasH;
       setScale(Math.max(0.05, Math.min(scaleW, scaleH)));
     };
     fitCanvas();
     const ro = new ResizeObserver(fitCanvas);
     if (containerRef.current) ro.observe(containerRef.current);
     return () => ro.disconnect();
-  }, []);
+  }, [canvasW, canvasH]);
 
   const saveSource = useCallback(
     (id: number, data: Record<string, number>) => {
@@ -118,7 +132,7 @@ export function CanvasPreview() {
         <div
           data-canvas="true"
           className="relative bg-black shadow-2xl ring-1 ring-white/10 overflow-hidden"
-          style={{ width: 1280, height: 720, transform: `scale(${scale})`, transformOrigin: 'center' }}
+          style={{ width: canvasW, height: canvasH, transform: `scale(${scale})`, transformOrigin: 'center' }}
         >
           {gridVisible && (
             <div
@@ -126,7 +140,7 @@ export function CanvasPreview() {
               style={{
                 backgroundImage:
                   'linear-gradient(rgba(255,255,255,0.8) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.8) 1px,transparent 1px)',
-                backgroundSize: '128px 72px',
+                backgroundSize: `${canvasW / 10}px ${canvasH / 10}px`,
               }}
             />
           )}

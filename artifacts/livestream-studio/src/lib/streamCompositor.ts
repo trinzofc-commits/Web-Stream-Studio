@@ -1,7 +1,7 @@
 /**
  * StreamCompositor
- * Renders all scene sources onto a hidden HTML5 canvas at 1280×720
- * and exposes a MediaStream via captureStream() for live encoding.
+ * Renders all scene sources onto a hidden HTML5 canvas at the configured
+ * resolution and aspect ratio, and exposes a MediaStream via captureStream().
  */
 
 type Source = {
@@ -31,10 +31,10 @@ export class StreamCompositor {
   private cameraCache = new Map<string, HTMLVideoElement>(); // key: deviceId
   private cameraStreams = new Map<string, MediaStream>();
 
-  constructor() {
+  constructor(width = 1280, height = 720) {
     this.canvas = document.createElement('canvas');
-    this.canvas.width = 1280;
-    this.canvas.height = 720;
+    this.canvas.width = width;
+    this.canvas.height = height;
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D not supported');
     this.ctx = ctx;
@@ -155,7 +155,7 @@ export class StreamCompositor {
     const { ctx } = this;
     // Black background
     ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, 1280, 720);
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     const visible = [...this.sources]
       .filter((s) => s.visible)
