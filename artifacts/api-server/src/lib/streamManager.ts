@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "child_process";
+import { execSync } from "child_process";
 import { logger } from "./logger";
 
 export type StreamState = "idle" | "connecting" | "live" | "stopping" | "error" | "reconnecting";
@@ -20,23 +21,40 @@ class StreamManager {
   private process: ChildProcess | null = null;
   private stats: StreamStats = {
     state: "idle",
-    fps: null,
-    bitrate: null,
-    droppedFrames: null,
-    totalFrames: null,
-    uptimeSeconds: null,
-    cpuUsage: null,
-    memoryMb: null,
-    networkKbps: null,
+    fps: null, bitrate: null, droppedFrames: null, totalFrames: null,
+    uptimeSeconds: null, cpuUsage: null, memoryMb: null, networkKbps: null,
     errorMessage: null,
   };
   private startTime: number | null = null;
-  private frameCount = 0;
   private statsInterval: ReturnType<typeof setInterval> | null = null;
+  private cpuInterval: ReturnType<typeof setInterval> | null = null;
   private listeners: Set<(stats: StreamStats) => void> = new Set();
+
+  // Session tracking for summary
+  private totalSessions = 0;
+  private totalUptimeSeconds = 0;
+  private lastStreamAt: string | null = null;
+  private sessionFpsSamples: number[] = [];
+  private sessionBitrateSamples: number[] = [];
 
   getStats(): StreamStats {
     return { ...this.stats };
+  }
+
+  getSummary() {
+    const avgFps = this.sessionFpsSamples.length > 0
+      ? this.sessionFpsSamples.reduce((a, b) => a + b, 0) / this.sessionFpsSamples.length
+      : 0;
+    const avgBitrate = this.sessionBitrateSamples.length > 0
+      ? this.sessionBitrateSamples.reduce((a, b) => a + b, 0) / this.sessionBitrateSamples.length
+      : 0;
+    return {
+      totalSessions: this.totalSessions,
+      avgFps: Math.round(avgFps),
+      avgBitrate: Math.round(avgBitrate),
+      totalUptimeSeconds: this.totalUptimeSeconds,
+      lastStreamAt: this.lastStreamAt,
+    };
   }
 
   subscribe(fn: (stats: StreamStats) => void): () => void {
@@ -48,33 +66,46 @@ class StreamManager {
     for (const fn of this.listeners) fn(this.stats);
   }
 
-  async start(rtmpUrl: string, streamKey: string): Promise<void> {
-    if (this.process) {
-      throw new Error("Stream already running");
+  private getCpuUsage(): number {
+    try {
+      // Read /proc/stat for Linux CPU usage
+      const out = execSync("grep 'cpu ' /proc/stat", { timeout: 500 }).toString().trim();
+      const parts = out.split(/\s+/).slice(1).map(Number);
+      const total = parts.reduce((a, b) => a + b, 0);
+      const idle = parts[3] ?? 0;
+      // Rough: return usage as percentage of non-idle
+      const usage = total > 0 ? ((total - idle) / total) * 100 : 0;
+      return Math.round(usage * 10) / 10;
+    } catch {
+      return 0;
     }
+  }
+
+  async start(rtmpUrl: string, streamKey: string): Promise<void> {
+    if (this.process) throw new Error("Stream already running");
+
+    if (!rtmpUrl || !streamKey) throw new Error("RTMP URL and stream key are required");
 
     this.stats = {
-      ...this.stats,
-      state: "connecting",
-      errorMessage: null,
-      droppedFrames: 0,
-      totalFrames: 0,
+      ...this.stats, state: "connecting", errorMessage: null,
+      droppedFrames: 0, totalFrames: 0, fps: null, bitrate: null,
     };
     this.emit();
 
-    const target = `${rtmpUrl}${streamKey}`;
-    logger.info({ target: rtmpUrl }, "Starting stream");
+    const target = `${rtmpUrl.replace(/\/$/, "")}/${streamKey}`;
+    logger.info({ rtmpUrl }, "Starting stream");
 
-    // Use ffmpeg to create a test stream (in production this would read from the canvas)
-    // For demonstration we generate a test pattern + tone
+    // FFmpeg: lavfi test source (stable video even without a capture device)
+    // In production this input would be replaced with the canvas video stream
     const args = [
       "-re",
       "-f", "lavfi",
       "-i", "testsrc2=size=1280x720:rate=30",
       "-f", "lavfi",
-      "-i", "sine=frequency=440:sample_rate=44100",
+      "-i", "aevalsrc=0.1*sin(2*PI*440*t)|0.1*sin(2*PI*440*t):s=44100",
       "-c:v", "libx264",
       "-preset", "veryfast",
+      "-tune", "zerolatency",
       "-b:v", "4000k",
       "-maxrate", "4500k",
       "-bufsize", "8000k",
@@ -88,8 +119,10 @@ class StreamManager {
     ];
 
     try {
-      this.process = spawn("ffmpeg", args);
+      this.process = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
       this.startTime = Date.now();
+      this.sessionFpsSamples = [];
+      this.sessionBitrateSamples = [];
 
       this.process.stderr?.on("data", (data: Buffer) => {
         const line = data.toString();
@@ -97,6 +130,8 @@ class StreamManager {
       });
 
       this.process.on("close", (code) => {
+        const uptime = this.startTime ? Math.floor((Date.now() - this.startTime) / 1000) : 0;
+        this.totalUptimeSeconds += uptime;
         if (this.stats.state !== "stopping") {
           this.stats.state = "error";
           this.stats.errorMessage = `FFmpeg exited with code ${code}`;
@@ -116,15 +151,17 @@ class StreamManager {
         this.emit();
       });
 
-      // Transition to live after a short delay
+      // Transition to live after FFmpeg initializes
       setTimeout(() => {
-        if (this.stats.state === "connecting") {
+        if (this.stats.state === "connecting" && this.process) {
           this.stats.state = "live";
+          this.totalSessions++;
+          this.lastStreamAt = new Date().toISOString();
           this.emit();
         }
-      }, 2000);
+      }, 2500);
 
-      // Start stats interval
+      // Uptime + memory stats
       this.statsInterval = setInterval(() => {
         if (this.startTime) {
           this.stats.uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
@@ -133,6 +170,12 @@ class StreamManager {
         this.stats.memoryMb = Math.round(mem.rss / 1024 / 1024);
         this.emit();
       }, 1000);
+
+      // CPU usage (sampled every 3s to avoid overhead)
+      this.cpuInterval = setInterval(() => {
+        this.stats.cpuUsage = this.getCpuUsage();
+      }, 3000);
+
     } catch (err: any) {
       this.stats.state = "error";
       this.stats.errorMessage = err.message || "Failed to start FFmpeg";
@@ -141,27 +184,27 @@ class StreamManager {
   }
 
   private parseFFmpegStats(line: string) {
-    // Parse fps from ffmpeg stderr output like "frame= 123 fps= 30 q=28.0 size=  1024kB time=00:00:04.10 bitrate=2048.0kbits/s"
     const fpsMatch = line.match(/fps=\s*(\d+(?:\.\d+)?)/);
     if (fpsMatch) {
-      this.stats.fps = parseFloat(fpsMatch[1]);
+      const fps = parseFloat(fpsMatch[1]);
+      this.stats.fps = fps;
+      if (this.stats.state === "live") this.sessionFpsSamples.push(fps);
     }
 
     const bitrateMatch = line.match(/bitrate=\s*(\d+(?:\.\d+)?)kbits\/s/);
     if (bitrateMatch) {
-      this.stats.bitrate = parseFloat(bitrateMatch[1]);
-      this.stats.networkKbps = this.stats.bitrate;
+      const bitrate = parseFloat(bitrateMatch[1]);
+      this.stats.bitrate = bitrate;
+      this.stats.networkKbps = bitrate;
+      if (this.stats.state === "live") this.sessionBitrateSamples.push(bitrate);
     }
 
     const frameMatch = line.match(/frame=\s*(\d+)/);
-    if (frameMatch) {
-      this.stats.totalFrames = parseInt(frameMatch[1]);
-    }
+    if (frameMatch) this.stats.totalFrames = parseInt(frameMatch[1]);
 
+    // FFmpeg reports dropped frames as "drop=N" or "dup=N drop=N"
     const dropMatch = line.match(/drop=\s*(\d+)/);
-    if (dropMatch) {
-      this.stats.droppedFrames = parseInt(dropMatch[1]);
-    }
+    if (dropMatch) this.stats.droppedFrames = parseInt(dropMatch[1]);
   }
 
   stop(): void {
@@ -169,8 +212,9 @@ class StreamManager {
     this.stats.state = "stopping";
     this.emit();
     this.process.kill("SIGTERM");
+    const proc = this.process;
     setTimeout(() => {
-      if (this.process) this.process.kill("SIGKILL");
+      try { proc.kill("SIGKILL"); } catch {}
     }, 3000);
   }
 
@@ -183,10 +227,8 @@ class StreamManager {
   }
 
   private cleanup() {
-    if (this.statsInterval) {
-      clearInterval(this.statsInterval);
-      this.statsInterval = null;
-    }
+    if (this.statsInterval) { clearInterval(this.statsInterval); this.statsInterval = null; }
+    if (this.cpuInterval) { clearInterval(this.cpuInterval); this.cpuInterval = null; }
     this.process = null;
     this.startTime = null;
   }

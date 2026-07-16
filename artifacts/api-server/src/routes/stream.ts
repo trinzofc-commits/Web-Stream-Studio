@@ -79,14 +79,7 @@ router.get("/stream/status", async (_req, res): Promise<void> => {
 });
 
 router.get("/stream/stats/summary", async (_req, res): Promise<void> => {
-  const summary = {
-    totalSessions: 1,
-    avgFps: 30,
-    avgBitrate: 4000,
-    totalUptimeSeconds: 0,
-    lastStreamAt: null,
-  };
-  res.json(GetStreamStatsSummaryResponse.parse(summary));
+  res.json(GetStreamStatsSummaryResponse.parse(streamManager.getSummary()));
 });
 
 export default router;

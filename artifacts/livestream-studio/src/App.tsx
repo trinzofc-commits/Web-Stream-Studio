@@ -1,11 +1,18 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import StudioPage from '@/pages/StudioPage';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
+import { Toaster } from 'sonner';
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 2000,
+    },
+  },
+});
 
 function Router() {
   return (
@@ -19,11 +26,11 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
+      <TooltipProvider delayDuration={300}>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <Router />
         </WouterRouter>
-        <Toaster />
+        <Toaster position="bottom-right" richColors theme="dark" />
       </TooltipProvider>
     </QueryClientProvider>
   );
