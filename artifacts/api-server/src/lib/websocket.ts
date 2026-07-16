@@ -4,7 +4,7 @@ import { logger } from "./logger";
 import { streamManager } from "./streamManager";
 
 export function createWebSocketServer(server: import("http").Server) {
-  const wss = new WebSocketServer({ server, path: "/ws" });
+  const wss = new WebSocketServer({ server, path: "/api/ws" });
 
   logger.info("WebSocket server created on /ws");
 

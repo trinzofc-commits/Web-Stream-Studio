@@ -75,7 +75,7 @@ export function useCanvasStream(sources: Source[], streamState: string | undefin
       const canvasStream = compositor.captureStream(30);
 
       // 3. Open binary WebSocket to backend BEFORE starting MediaRecorder
-      const ws = new WebSocket(getWsUrl('/ws?role=stream'));
+      const ws = new WebSocket(getWsUrl('/api/ws?role=stream'));
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
