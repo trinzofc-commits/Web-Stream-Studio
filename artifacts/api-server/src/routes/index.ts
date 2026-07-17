@@ -8,6 +8,7 @@ import outputRouter from "./output";
 import audioRouter from "./audio";
 import uploadsRouter from "./uploads";
 import rtmpRouter from "./rtmp";
+import serverInfoRouter from "./serverInfo";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(outputRouter);
 router.use(audioRouter);
 router.use(uploadsRouter);
 router.use(rtmpRouter);
+router.use(serverInfoRouter);
 
 export default router;

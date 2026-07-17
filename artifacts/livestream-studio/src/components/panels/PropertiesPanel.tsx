@@ -719,9 +719,17 @@ function RtmpSettings({
   commit: (k: string, v: any) => void;
 }) {
   const streamKey: string = settings.streamKey ?? '';
-  const rtmpUrl = `rtmp://${window.location.hostname}:1935/live`;
-  const [copied, setCopied] = React.useState(false);
+  const [copiedUrl, setCopiedUrl] = React.useState<string | null>(null);
   const [live, setLive] = React.useState(false);
+  const [localIps, setLocalIps] = React.useState<string[]>([]);
+
+  // Fetch local IPs from server
+  React.useEffect(() => {
+    fetch('/api/server/info')
+      .then((r) => r.json())
+      .then((d) => setLocalIps(d.localIps ?? []))
+      .catch(() => {});
+  }, []);
 
   // Poll live status every 3s when a stream key is set
   React.useEffect(() => {
@@ -743,10 +751,12 @@ function RtmpSettings({
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopiedUrl(text);
+      setTimeout(() => setCopiedUrl(null), 2000);
     });
   };
+
+  const rtmpUrls = localIps.map((ip) => ({ label: `IP: ${ip}`, url: `rtmp://${ip}:1935/live` }));
 
   return (
     <div className="space-y-3">
@@ -762,25 +772,33 @@ function RtmpSettings({
         />
       </div>
 
-      {/* RTMP server URL to enter in DJI Fly */}
-      <div className="space-y-1">
+      {/* RTMP URLs — one per local IP */}
+      <div className="space-y-1.5">
         <Label className="text-[10px] text-muted-foreground uppercase">RTMP Server URL (nhập vào DJI Fly)</Label>
-        <div className="flex gap-1.5">
-          <div className="flex-1 bg-muted/50 rounded px-2 py-1 font-mono text-[10px] break-all leading-tight select-all">
-            {rtmpUrl}
+        {rtmpUrls.length === 0 && (
+          <p className="text-[10px] text-muted-foreground">Đang lấy IP...</p>
+        )}
+        {rtmpUrls.map(({ label, url }) => (
+          <div key={url} className="space-y-0.5">
+            <p className="text-[9px] text-muted-foreground">{label}</p>
+            <div className="flex gap-1.5">
+              <div className="flex-1 bg-muted/50 rounded px-2 py-1 font-mono text-[10px] break-all leading-tight select-all">
+                {url}
+              </div>
+              <Button
+                variant="outline" size="icon" className="h-7 w-7 shrink-0"
+                onClick={() => copyToClipboard(url)}
+                title="Sao chép URL"
+              >
+                {copiedUrl === url
+                  ? <Check className="w-3.5 h-3.5 text-green-500" />
+                  : <Copy className="w-3.5 h-3.5" />}
+              </Button>
+            </div>
           </div>
-          <Button
-            variant="outline" size="icon" className="h-7 w-7 shrink-0"
-            onClick={() => copyToClipboard(rtmpUrl)}
-            title="Sao chép URL"
-          >
-            {copied
-              ? <Check className="w-3.5 h-3.5 text-green-500" />
-              : <Copy className="w-3.5 h-3.5" />}
-          </Button>
-        </div>
+        ))}
         {streamKey && (
-          <p className="text-[9px] text-muted-foreground font-mono">
+          <p className="text-[9px] text-muted-foreground font-mono pt-0.5">
             Stream key: <span className="text-foreground">{streamKey}</span>
           </p>
         )}
@@ -808,7 +826,7 @@ function RtmpSettings({
         <p className="text-[10px] font-semibold text-blue-300">Hướng dẫn DJI Fly:</p>
         <ol className="text-[10px] text-blue-200/80 space-y-1 list-none">
           <li>1. Mở DJI Fly → Live Stream → Custom RTMP</li>
-          <li>2. Dán URL server vào ô <span className="font-mono">RTMP URL</span></li>
+          <li>2. Sao chép URL IP ở trên vào ô <span className="font-mono">RTMP URL</span></li>
           <li>3. Nhập stream key vào ô <span className="font-mono">Stream Key</span></li>
           <li>4. Bắt đầu phát → source tự hiện trong studio</li>
         </ol>
@@ -816,7 +834,7 @@ function RtmpSettings({
 
       {/* Network note */}
       <p className="text-[9px] text-muted-foreground leading-relaxed">
-        ⚠️ Điện thoại và server phải cùng mạng hoặc port 1935 phải được mở public.
+        ⚠️ DJI Fly và server phải cùng mạng WiFi để kết nối qua IP local.
       </p>
     </div>
   );
