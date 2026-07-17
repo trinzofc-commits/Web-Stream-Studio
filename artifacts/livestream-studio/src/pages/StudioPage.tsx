@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { TopMenubar } from '@/components/layout/TopMenubar';
 import { BottomBar } from '@/components/layout/BottomBar';
+import { MobileLayout } from '@/components/layout/MobileLayout';
 import { ScenePanel } from '@/components/panels/ScenePanel';
 import { SourcePanel } from '@/components/panels/SourcePanel';
 import { CanvasPreview } from '@/components/canvas/CanvasPreview';
@@ -13,6 +14,7 @@ import { StudioProvider, useStudio } from '@/context/StudioContext';
 import { useDeleteSource, useListSources, useCreateSource, useGetStreamStatus, useGetOutputConfig, getListSourcesQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCanvasStream } from '@/hooks/useCanvasStream';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 const RESOLUTION_BASE: Record<string, [number, number]> = {
   '720p':  [1280, 720],
@@ -116,6 +118,8 @@ function StudioContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeSourceId, activeSceneId, sources, deleteSource, createSource, queryClient, setActiveSourceId]);
 
+  const isMobile = useIsMobile();
+
   if (isLoading || !activeProjectId) {
     return (
       <div className="h-screen w-full flex items-center justify-center bg-background text-foreground">
@@ -127,6 +131,32 @@ function StudioContent() {
     );
   }
 
+  // ── Mobile layout ──────────────────────────────────────────────────────────
+  if (isMobile) {
+    return (
+      <>
+        <MobileLayout
+          onSettingsOpen={() => setSettingsOpen(true)}
+          onMediaLibraryOpen={openMediaLibrary}
+        />
+        <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <MediaLibraryModal
+          open={mediaLibraryOpen}
+          onOpenChange={(v) => {
+            if (!v) mediaSelectCallbackRef.current = null;
+            setMediaLibraryOpen(v);
+          }}
+          onSelect={mediaSelectCallbackRef.current ? (asset) => {
+            mediaSelectCallbackRef.current?.(asset.url);
+            mediaSelectCallbackRef.current = null;
+            setMediaLibraryOpen(false);
+          } : undefined}
+        />
+      </>
+    );
+  }
+
+  // ── Desktop layout ─────────────────────────────────────────────────────────
   return (
     <div className="h-screen w-full flex flex-col bg-background text-foreground overflow-hidden">
       <TopMenubar

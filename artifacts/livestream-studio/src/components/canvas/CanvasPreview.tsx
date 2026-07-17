@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Toggle } from '@/components/ui/toggle';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 type HandleDir = 'n' | 's' | 'e' | 'w' | 'nw' | 'ne' | 'sw' | 'se';
 
@@ -43,6 +44,7 @@ export function CanvasPreview() {
   const { activeSceneId, activeSourceId, setActiveSourceId } = useStudio();
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
   const { data: sources = [] } = useListSources(activeSceneId!, {
     query: { enabled: !!activeSceneId },
@@ -96,27 +98,29 @@ export function CanvasPreview() {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-background overflow-hidden relative">
-      {/* Toolbar */}
-      <div className="absolute top-2 right-2 z-10 flex gap-1 bg-card/90 backdrop-blur border border-border p-1 rounded-md shadow">
-        <Toggle
-          size="sm"
-          pressed={gridVisible}
-          onPressedChange={setGridVisible}
-          className="h-7 px-2 text-xs"
-        >
-          Grid
-        </Toggle>
-        <div className="w-px h-7 bg-border" />
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale((s) => Math.max(0.05, s - 0.05))}>
-          <ZoomOut className="w-3.5 h-3.5" />
-        </Button>
-        <span className="text-xs font-mono w-12 flex items-center justify-center">
-          {Math.round(scale * 100)}%
-        </span>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale((s) => s + 0.05)}>
-          <ZoomIn className="w-3.5 h-3.5" />
-        </Button>
-      </div>
+      {/* Toolbar — hidden on mobile */}
+      {!isMobile && (
+        <div className="absolute top-2 right-2 z-10 flex gap-1 bg-card/90 backdrop-blur border border-border p-1 rounded-md shadow">
+          <Toggle
+            size="sm"
+            pressed={gridVisible}
+            onPressedChange={setGridVisible}
+            className="h-7 px-2 text-xs"
+          >
+            Grid
+          </Toggle>
+          <div className="w-px h-7 bg-border" />
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale((s) => Math.max(0.05, s - 0.05))}>
+            <ZoomOut className="w-3.5 h-3.5" />
+          </Button>
+          <span className="text-xs font-mono w-12 flex items-center justify-center">
+            {Math.round(scale * 100)}%
+          </span>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale((s) => s + 0.05)}>
+            <ZoomIn className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      )}
 
       {/* Canvas area */}
       <div
