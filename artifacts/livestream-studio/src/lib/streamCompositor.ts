@@ -3,6 +3,7 @@
  * Renders all scene sources onto a hidden HTML5 canvas at the configured
  * resolution and aspect ratio, and exposes a MediaStream via captureStream().
  */
+import Hls from 'hls.js';
 
 type Source = {
   id: number;
@@ -31,6 +32,7 @@ export class StreamCompositor {
   private videoCache = new Map<number, HTMLVideoElement>(); // key: source.id
   private cameraCache = new Map<string, HTMLVideoElement>(); // key: deviceId
   private cameraStreams = new Map<string, MediaStream>();
+  private rtmpCache = new Map<number, { video: HTMLVideoElement; hls: Hls | null; streamKey: string }>(); // key: source.id
 
   constructor(width = 1280, height = 720) {
     this.canvas = document.createElement('canvas');
@@ -92,6 +94,38 @@ export class StreamCompositor {
         }
       }
 
+      // RTMP Input (DJI Fly / external encoder → HLS playback)
+      if (src.type === 'rtmp' && s.streamKey) {
+        const existing = this.rtmpCache.get(src.id);
+        // Recreate if streamKey changed
+        if (existing && existing.streamKey !== s.streamKey) {
+          existing.hls?.destroy();
+          existing.video.pause();
+          existing.video.src = '';
+          this.rtmpCache.delete(src.id);
+        }
+        if (!this.rtmpCache.has(src.id)) {
+          const vid = document.createElement('video');
+          vid.autoplay = true;
+          vid.muted = true;
+          vid.playsInline = true;
+          const hlsUrl = `/api/hls/${s.streamKey}/index.m3u8`;
+
+          if (Hls.isSupported()) {
+            const hls = new Hls({ lowLatencyMode: true, backBufferLength: 5 });
+            hls.loadSource(hlsUrl);
+            hls.attachMedia(vid);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => vid.play().catch(() => {}));
+            this.rtmpCache.set(src.id, { video: vid, hls, streamKey: s.streamKey });
+          } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+            // Safari native HLS
+            vid.src = hlsUrl;
+            vid.play().catch(() => {});
+            this.rtmpCache.set(src.id, { video: vid, hls: null, streamKey: s.streamKey });
+          }
+        }
+      }
+
       // Camera
       if (src.type === 'camera') {
         const key = s.deviceId ?? 'default';
@@ -143,6 +177,12 @@ export class StreamCompositor {
       vid.src = '';
     }
     this.videoCache.clear();
+    for (const { video, hls } of this.rtmpCache.values()) {
+      hls?.destroy();
+      video.pause();
+      video.src = '';
+    }
+    this.rtmpCache.clear();
   }
 
   /** Get a live MediaStream from the canvas */
@@ -309,6 +349,18 @@ export class StreamCompositor {
             }
           } else {
             this.placeholder(ctx, x, y, width, height, '#1a1e2a');
+          }
+          break;
+        }
+
+        case 'rtmp': {
+          const entry = this.rtmpCache.get(source.id);
+          const vid = entry?.video;
+          if (vid && vid.readyState >= 2 && vid.videoWidth > 0) {
+            ctx.drawImage(vid, x, y, width, height);
+          } else {
+            // Show a "waiting" placeholder with signal icon color
+            this.placeholder(ctx, x, y, width, height, '#0a2a1a');
           }
           break;
         }

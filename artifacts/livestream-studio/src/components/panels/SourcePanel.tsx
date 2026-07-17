@@ -12,7 +12,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, ContextMenuSeparator } from '@/components/ui/context-menu';
-import { Plus, Trash2, Copy, Eye, EyeOff, Lock, Unlock, GripVertical, Video, Monitor, Image as ImageIcon, Film, Music, Globe, Type, QrCode, Clock, Timer, LayoutGrid, List, Music2, FileText, Bookmark, Stamp, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown } from 'lucide-react';
+import { Plus, Trash2, Copy, Eye, EyeOff, Lock, Unlock, GripVertical, Video, Monitor, Image as ImageIcon, Film, Music, Globe, Type, QrCode, Clock, Timer, LayoutGrid, List, Music2, FileText, Bookmark, Stamp, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown, Signal } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 
 const sourceIcons: Record<string, any> = {
@@ -33,6 +33,7 @@ const sourceIcons: Record<string, any> = {
   pdf: FileText,
   logo: Bookmark,
   watermark: Stamp,
+  rtmp: Signal,
 };
 
 export function SourcePanel() {

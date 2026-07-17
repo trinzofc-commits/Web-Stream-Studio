@@ -3,6 +3,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { createWebSocketServer } from "./lib/websocket";
 import { seedInitialData } from "./lib/seed";
+import { createRtmpServer } from "./lib/rtmpServer";
 
 const rawPort = process.env["PORT"];
 
@@ -30,4 +31,5 @@ server.listen(port, async (err?: Error) => {
   }
   logger.info({ port }, "Server listening");
   await seedInitialData();
+  createRtmpServer(1935);
 });

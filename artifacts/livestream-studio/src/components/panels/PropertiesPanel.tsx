@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button';
 import { useQueryClient } from '@tanstack/react-query';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { FolderOpen, Plus, Minus } from 'lucide-react';
+import { FolderOpen, Plus, Minus, Copy, Check, Wifi, WifiOff } from 'lucide-react';
 
 interface Props {
   onOpenMediaLibrary?: (onSelect: (url: string) => void) => void;
@@ -194,6 +194,10 @@ function SourceSettings({
           </Row>
         </div>
       );
+
+    /* ---- RTMP INPUT (DJI Fly / external encoder) ---- */
+    case 'rtmp':
+      return <RtmpSettings settings={settings} commit={commit} />;
 
     /* ---- AUDIO INPUT ---- */
     case 'audio':
@@ -700,6 +704,120 @@ function UrlListSettings({
         </div>
       </div>
       {children}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* RTMP Input (DJI Fly / external encoder)                             */
+/* ------------------------------------------------------------------ */
+function RtmpSettings({
+  settings,
+  commit,
+}: {
+  settings: Record<string, any>;
+  commit: (k: string, v: any) => void;
+}) {
+  const streamKey: string = settings.streamKey ?? '';
+  const rtmpUrl = `rtmp://${window.location.hostname}:1935/live`;
+  const [copied, setCopied] = React.useState(false);
+  const [live, setLive] = React.useState(false);
+
+  // Poll live status every 3s when a stream key is set
+  React.useEffect(() => {
+    if (!streamKey) { setLive(false); return; }
+    let mounted = true;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/rtmp/streams/${encodeURIComponent(streamKey)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (mounted) setLive(Boolean(data.live));
+        }
+      } catch { if (mounted) setLive(false); }
+    };
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [streamKey]);
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Stream key */}
+      <div className="space-y-1">
+        <Label className="text-[10px] text-muted-foreground uppercase">Stream Key</Label>
+        <Input
+          className="h-7 text-xs font-mono"
+          placeholder="vd: dji"
+          defaultValue={streamKey}
+          key={streamKey}
+          onBlur={(e) => commit('streamKey', e.target.value.trim())}
+        />
+      </div>
+
+      {/* RTMP server URL to enter in DJI Fly */}
+      <div className="space-y-1">
+        <Label className="text-[10px] text-muted-foreground uppercase">RTMP Server URL (nhập vào DJI Fly)</Label>
+        <div className="flex gap-1.5">
+          <div className="flex-1 bg-muted/50 rounded px-2 py-1 font-mono text-[10px] break-all leading-tight select-all">
+            {rtmpUrl}
+          </div>
+          <Button
+            variant="outline" size="icon" className="h-7 w-7 shrink-0"
+            onClick={() => copyToClipboard(rtmpUrl)}
+            title="Sao chép URL"
+          >
+            {copied
+              ? <Check className="w-3.5 h-3.5 text-green-500" />
+              : <Copy className="w-3.5 h-3.5" />}
+          </Button>
+        </div>
+        {streamKey && (
+          <p className="text-[9px] text-muted-foreground font-mono">
+            Stream key: <span className="text-foreground">{streamKey}</span>
+          </p>
+        )}
+      </div>
+
+      {/* Live status */}
+      {streamKey && (
+        <div className="flex items-center gap-2 py-0.5">
+          {live ? (
+            <>
+              <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-[10px] text-green-500 font-medium">Đang nhận stream từ DJI</span>
+            </>
+          ) : (
+            <>
+              <span className="h-2 w-2 rounded-full bg-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground">Chờ DJI Fly kết nối...</span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Setup guide */}
+      <div className="rounded-md bg-blue-500/10 border border-blue-500/20 p-2.5 space-y-1.5">
+        <p className="text-[10px] font-semibold text-blue-300">Hướng dẫn DJI Fly:</p>
+        <ol className="text-[10px] text-blue-200/80 space-y-1 list-none">
+          <li>1. Mở DJI Fly → Live Stream → Custom RTMP</li>
+          <li>2. Dán URL server vào ô <span className="font-mono">RTMP URL</span></li>
+          <li>3. Nhập stream key vào ô <span className="font-mono">Stream Key</span></li>
+          <li>4. Bắt đầu phát → source tự hiện trong studio</li>
+        </ol>
+      </div>
+
+      {/* Network note */}
+      <p className="text-[9px] text-muted-foreground leading-relaxed">
+        ⚠️ Điện thoại và server phải cùng mạng hoặc port 1935 phải được mở public.
+      </p>
     </div>
   );
 }
