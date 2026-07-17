@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Video, Layers, Radio, Music2, Settings, Plus, Trash2, Eye, EyeOff, Signal, Play, Square, RefreshCw, ChevronRight, Copy, Image as ImageIcon, Film, Type, LayoutGrid, Clock, Timer, QrCode, Bookmark, Stamp, List, Music, Globe } from 'lucide-react';
+import { Video, Layers, Radio, Music2, Settings, Plus, Trash2, Eye, EyeOff, Signal, Play, Square, RefreshCw, ChevronRight, Copy, Image as ImageIcon, Film, Type, LayoutGrid, Clock, Timer, QrCode, Bookmark, Stamp, List, Music, Globe, Maximize2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useStudio } from '@/context/StudioContext';
 import {
   useListScenes, useCreateScene, useDeleteScene, useUpdateScene, useDuplicateScene, getListScenesQueryKey,
@@ -254,8 +255,17 @@ function SceneTab() {
   );
 }
 
+// Source types that need a URL to be useful — auto-open media picker on mobile
+const URL_SOURCE_TYPES = new Set(['image', 'logo', 'watermark', 'video']);
+
 // ─── Source tab ─────────────────────────────────────────────────────────────────
-function SourceTab({ onSelectSource }: { onSelectSource: (id: number) => void }) {
+function SourceTab({
+  onSelectSource,
+  onOpenMediaLibrary,
+}: {
+  onSelectSource: (id: number) => void;
+  onOpenMediaLibrary: (cb: (url: string) => void) => void;
+}) {
   const { activeSceneId, activeSourceId, setActiveSourceId } = useStudio();
   const queryClient = useQueryClient();
   const { data: sources = [] } = useListSources(activeSceneId!, { query: { enabled: !!activeSceneId } });
@@ -263,19 +273,37 @@ function SourceTab({ onSelectSource }: { onSelectSource: (id: number) => void })
   const deleteSource = useDeleteSource();
   const updateSource = useUpdateSource();
 
-  const handleCreate = (type: string) => {
+  const doCreate = (type: string, extraSettings: Record<string, any> = {}) => {
     if (!activeSceneId) return;
     const info = MOBILE_SOURCE_TYPES.find(s => s.type === type);
+    const settings = Object.keys(extraSettings).length ? extraSettings : undefined;
     createSource.mutate({
       sceneId: activeSceneId,
-      data: { name: info?.label ?? type, type: type as any, x: 0, y: 0, width: 1280, height: 720, opacity: 100, rotation: 0 },
+      data: { name: info?.label ?? type, type: type as any, x: 0, y: 0, width: 1280, height: 720, opacity: 100, rotation: 0, ...(settings ? { settings } : {}) },
     }, {
       onSuccess: (s) => {
-        queryClient.invalidateQueries({ queryKey: getListSourcesQueryKey(activeSceneId) });
+        // If we already set a URL via media library, also update the source settings
+        if (extraSettings.url) {
+          updateSource.mutate({ id: s.id, data: { settings: extraSettings } }, {
+            onSuccess: () => queryClient.invalidateQueries({ queryKey: getListSourcesQueryKey(activeSceneId!) }),
+          });
+        } else {
+          queryClient.invalidateQueries({ queryKey: getListSourcesQueryKey(activeSceneId) });
+        }
         setActiveSourceId(s.id);
         onSelectSource(s.id);
       },
     });
+  };
+
+  const handleCreate = (type: string) => {
+    if (!activeSceneId) return;
+    // For URL-based sources, open the media library first so the image appears immediately
+    if (URL_SOURCE_TYPES.has(type)) {
+      onOpenMediaLibrary((url) => doCreate(type, { url }));
+      return;
+    }
+    doCreate(type);
   };
 
   if (!activeSceneId) {
@@ -495,6 +523,7 @@ export function MobileLayout({ onSettingsOpen, onMediaLibraryOpen }: {
 
   const [activeTab, setActiveTab] = useState<Tab>('scenes');
   const [propertiesOpen, setPropertiesOpen] = useState(false);
+  const [canvasFullscreen, setCanvasFullscreen] = useState(false);
 
   const handleSourceSelect = (_id: number) => {
     setPropertiesOpen(true);
@@ -511,14 +540,21 @@ export function MobileLayout({ onSettingsOpen, onMediaLibraryOpen }: {
       />
 
       {/* Canvas — exact pixel size computed from aspect ratio + viewport */}
-      <div
-        className="shrink-0 bg-black mx-auto overflow-hidden"
-        style={canvasSize
-          ? { width: canvasSize.width, height: canvasSize.height }
-          : { width: '100%', aspectRatio: '16/9' }
-        }
-      >
-        <CanvasPreview />
+      <div className="shrink-0 mx-auto relative" style={canvasSize
+        ? { width: canvasSize.width, height: canvasSize.height }
+        : { width: '100%', aspectRatio: '16/9' }
+      }>
+        <div className="w-full h-full bg-black overflow-hidden">
+          <CanvasPreview />
+        </div>
+        {/* Expand to fullscreen button */}
+        <button
+          className="absolute top-1.5 right-1.5 z-20 bg-black/60 hover:bg-black/80 text-white rounded-md p-1.5 transition-colors"
+          onClick={() => setCanvasFullscreen(true)}
+          title="Mở rộng canvas"
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Stream button */}
@@ -530,7 +566,7 @@ export function MobileLayout({ onSettingsOpen, onMediaLibraryOpen }: {
       {/* Tab content */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {activeTab === 'scenes'  && <SceneTab />}
-        {activeTab === 'sources' && <SourceTab onSelectSource={handleSourceSelect} />}
+        {activeTab === 'sources' && <SourceTab onSelectSource={handleSourceSelect} onOpenMediaLibrary={onMediaLibraryOpen} />}
         {activeTab === 'audio'   && <AudioTab />}
       </div>
 
@@ -545,6 +581,30 @@ export function MobileLayout({ onSettingsOpen, onMediaLibraryOpen }: {
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* Fullscreen canvas dialog */}
+      <Dialog open={canvasFullscreen} onOpenChange={setCanvasFullscreen}>
+        <DialogContent className="w-screen h-[100dvh] max-w-none p-0 m-0 rounded-none bg-background flex flex-col border-0 gap-0">
+          {/* Toolbar */}
+          <div className="shrink-0 flex items-center justify-between px-3 py-2 bg-card border-b border-border">
+            <span className="text-xs font-semibold text-muted-foreground">Canvas — kéo để di chuyển, kéo góc để resize</span>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCanvasFullscreen(false)}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+          {/* Full-size canvas */}
+          <div className="flex-1 min-h-0">
+            <CanvasPreview />
+          </div>
+          {/* Bottom hint */}
+          <div className="shrink-0 px-3 py-2 bg-card border-t border-border flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Chọn source rồi kéo để di chuyển / kéo góc để resize</span>
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setCanvasFullscreen(false); setPropertiesOpen(true); }}>
+              Thuộc tính
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
