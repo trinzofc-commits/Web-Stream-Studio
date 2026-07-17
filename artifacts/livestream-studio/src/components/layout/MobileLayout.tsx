@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Video, Layers, Radio, Music2, Settings, Plus, Trash2, Eye, EyeOff, Signal, Play, Square, RefreshCw, ChevronRight, Edit2, Copy, Image as ImageIcon, Film, Type, LayoutGrid, Clock, Timer, QrCode, Bookmark, Stamp, List, Music, Globe } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Video, Layers, Radio, Music2, Settings, Plus, Trash2, Eye, EyeOff, Signal, Play, Square, RefreshCw, ChevronRight, Copy, Image as ImageIcon, Film, Type, LayoutGrid, Clock, Timer, QrCode, Bookmark, Stamp, List, Music, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -11,7 +11,7 @@ import {
   useListScenes, useCreateScene, useDeleteScene, useUpdateScene, useDuplicateScene, getListScenesQueryKey,
   useListSources, useCreateSource, useDeleteSource, useUpdateSource, getListSourcesQueryKey,
   useListAudioTracks, useUpdateAudioTrack, getListAudioTracksQueryKey,
-  useGetStreamStatus, useStartStream, useStopStream, useGetStreamConfig,
+  useGetStreamStatus, useStartStream, useStopStream, useGetStreamConfig, useGetOutputConfig,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -433,6 +433,52 @@ function AudioTab() {
   );
 }
 
+const RESOLUTION_BASE: Record<string, [number, number]> = {
+  '720p':  [1280, 720],
+  '1080p': [1920, 1080],
+  '1440p': [2560, 1440],
+  '4K':    [3840, 2160],
+};
+
+/**
+ * Computes exact pixel dimensions for the canvas preview container.
+ * CSS aspect-ratio alone is unreliable in flex columns — pixel values are precise.
+ *
+ * Max height is capped at MAX_H_RATIO of viewport height so the rest of the UI fits.
+ */
+const MAX_H_RATIO = 0.40; // 40% of viewport height
+
+function useCanvasContainerSize(aspectRatioSetting: string) {
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const compute = () => {
+      const vw = window.innerWidth;
+      const maxH = window.innerHeight * MAX_H_RATIO;
+      let w: number, h: number;
+
+      if (aspectRatioSetting === 'portrait') {
+        // Canvas is 9:16 — tall. Fit into width first, then cap height.
+        h = vw * (16 / 9);
+        if (h > maxH) { h = maxH; w = maxH * (9 / 16); }
+        else { w = vw; }
+      } else {
+        // Canvas is 16:9 — wide. Fit width, height follows.
+        w = vw;
+        h = vw * (9 / 16);
+        if (h > maxH) { h = maxH; w = maxH * (16 / 9); }
+      }
+      setSize({ width: Math.round(w), height: Math.round(h) });
+    };
+
+    compute();
+    window.addEventListener('resize', compute);
+    return () => window.removeEventListener('resize', compute);
+  }, [aspectRatioSetting]);
+
+  return size;
+}
+
 // ─── Main mobile layout ─────────────────────────────────────────────────────────
 export function MobileLayout({ onSettingsOpen, onMediaLibraryOpen }: {
   onSettingsOpen: () => void;
@@ -440,13 +486,17 @@ export function MobileLayout({ onSettingsOpen, onMediaLibraryOpen }: {
 }) {
   const { activeProject } = useStudio();
   const { data: streamStatus } = useGetStreamStatus({ query: { refetchInterval: 1000 } });
+  const { data: outputConfig } = useGetOutputConfig();
   const isLive = streamStatus?.state === 'live';
   const isConnecting = streamStatus?.state === 'connecting';
+
+  const aspectRatioSetting: string = (outputConfig as any)?.aspectRatio ?? 'landscape';
+  const canvasSize = useCanvasContainerSize(aspectRatioSetting);
 
   const [activeTab, setActiveTab] = useState<Tab>('scenes');
   const [propertiesOpen, setPropertiesOpen] = useState(false);
 
-  const handleSourceSelect = (id: number) => {
+  const handleSourceSelect = (_id: number) => {
     setPropertiesOpen(true);
   };
 
@@ -460,8 +510,14 @@ export function MobileLayout({ onSettingsOpen, onMediaLibraryOpen }: {
         onSettingsOpen={onSettingsOpen}
       />
 
-      {/* Canvas — fixed 16:9 aspect ratio area */}
-      <div className="shrink-0 bg-black w-full" style={{ aspectRatio: '16/9', maxHeight: '40vh' }}>
+      {/* Canvas — exact pixel size computed from aspect ratio + viewport */}
+      <div
+        className="shrink-0 bg-black mx-auto overflow-hidden"
+        style={canvasSize
+          ? { width: canvasSize.width, height: canvasSize.height }
+          : { width: '100%', aspectRatio: '16/9' }
+        }
+      >
         <CanvasPreview />
       </div>
 
