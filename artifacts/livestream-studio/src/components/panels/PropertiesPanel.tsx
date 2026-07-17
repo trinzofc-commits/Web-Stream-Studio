@@ -723,6 +723,15 @@ function RtmpSettings({
   const [live, setLive] = React.useState(false);
   const [localIps, setLocalIps] = React.useState<string[]>([]);
 
+  // Auto-generate and persist stream key if missing (e.g. sources created before this feature)
+  React.useEffect(() => {
+    if (!streamKey) {
+      const generated = Math.random().toString(36).slice(2, 10);
+      commit('streamKey', generated);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Fetch local IPs from server
   React.useEffect(() => {
     fetch('/api/server/info')
