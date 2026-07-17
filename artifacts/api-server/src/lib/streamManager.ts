@@ -29,6 +29,7 @@ class StreamManager {
   private startTime: number | null = null;
   private statsInterval: ReturnType<typeof setInterval> | null = null;
   private cpuInterval: ReturnType<typeof setInterval> | null = null;
+  private connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private listeners: Set<(stats: StreamStats) => void> = new Set();
 
   // Pending config waiting for a stream client to connect
@@ -87,6 +88,20 @@ class StreamManager {
     };
     this.emit();
     logger.info({ rtmpUrl }, "Stream connecting — waiting for browser canvas stream");
+
+    // Watchdog: if no stream client connects within 10s, auto-fail.
+    // Without this, state stays "connecting" forever when the WebSocket
+    // never arrives (network failure, proxy drop, etc.).
+    this.connectTimeoutId = setTimeout(() => {
+      this.connectTimeoutId = null;
+      if (this.stats.state !== "connecting") return;
+      logger.error("No stream client connected within 10s — aborting");
+      this.pendingConfig = null;
+      this.stats.state = "error";
+      this.stats.errorMessage = "Stream client did not connect in time. Check your network and try again.";
+      this.cleanup();
+      this.emit();
+    }, 10_000);
   }
 
   /**
@@ -102,6 +117,12 @@ class StreamManager {
 
     const { rtmpUrl, streamKey } = this.pendingConfig;
     this.pendingConfig = null;
+
+    // Client arrived — cancel the watchdog timeout
+    if (this.connectTimeoutId) {
+      clearTimeout(this.connectTimeoutId);
+      this.connectTimeoutId = null;
+    }
 
     const target = `${rtmpUrl.replace(/\/$/, "")}/${streamKey}`;
     logger.info({ target }, "Stream client connected — spawning FFmpeg with canvas input");
@@ -252,14 +273,20 @@ class StreamManager {
   }
 
   stop(): void {
-    if (!this.process && this.stats.state === "connecting") {
-      // Cancelled before FFmpeg started
+    // Always clear the watchdog when stopping
+    if (this.connectTimeoutId) {
+      clearTimeout(this.connectTimeoutId);
+      this.connectTimeoutId = null;
+    }
+    if (!this.process) {
+      // No FFmpeg running — reset to idle regardless of current state
       this.pendingConfig = null;
       this.stats.state = "idle";
+      this.stats.errorMessage = null;
+      this.cleanup();
       this.emit();
       return;
     }
-    if (!this.process) return;
     this.stats.state = "stopping";
     this.emit();
     this.process.stdin?.end();
@@ -277,6 +304,7 @@ class StreamManager {
   }
 
   private cleanup() {
+    if (this.connectTimeoutId) { clearTimeout(this.connectTimeoutId); this.connectTimeoutId = null; }
     if (this.statsInterval) { clearInterval(this.statsInterval); this.statsInterval = null; }
     if (this.cpuInterval) { clearInterval(this.cpuInterval); this.cpuInterval = null; }
     this.process = null;
