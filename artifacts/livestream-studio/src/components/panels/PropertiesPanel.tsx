@@ -721,9 +721,10 @@ function RtmpSettings({
   const streamKey: string = settings.streamKey ?? '';
   const [copiedUrl, setCopiedUrl] = React.useState<string | null>(null);
   const [live, setLive] = React.useState(false);
-  const [localIps, setLocalIps] = React.useState<string[]>([]);
+  const [publicRtmpUrl, setPublicRtmpUrl] = React.useState<string | null>(null);
+  const [tunnelReady, setTunnelReady] = React.useState(false);
 
-  // Auto-generate and persist stream key if missing (e.g. sources created before this feature)
+  // Auto-generate and persist stream key if missing
   React.useEffect(() => {
     if (!streamKey) {
       const generated = Math.random().toString(36).slice(2, 10);
@@ -732,12 +733,26 @@ function RtmpSettings({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fetch local IPs from server
+  // Poll server/info until tunnel is ready
   React.useEffect(() => {
-    fetch('/api/server/info')
-      .then((r) => r.json())
-      .then((d) => setLocalIps(d.localIps ?? []))
-      .catch(() => {});
+    let mounted = true;
+    const poll = () => {
+      fetch('/api/server/info')
+        .then((r) => r.json())
+        .then((d) => {
+          if (!mounted) return;
+          if (d.publicRtmpUrl) {
+            setPublicRtmpUrl(d.publicRtmpUrl);
+            setTunnelReady(true);
+          } else {
+            setTunnelReady(false);
+            setTimeout(poll, 2000); // retry until tunnel is up
+          }
+        })
+        .catch(() => { if (mounted) setTimeout(poll, 3000); });
+    };
+    poll();
+    return () => { mounted = false; };
   }, []);
 
   // Poll live status every 3s when a stream key is set
@@ -764,8 +779,6 @@ function RtmpSettings({
       setTimeout(() => setCopiedUrl(null), 2000);
     });
   };
-
-  const rtmpUrls = localIps.map((ip) => ({ label: `IP: ${ip}`, url: `rtmp://${ip}:1935/live` }));
 
   return (
     <div className="space-y-3">
@@ -799,31 +812,33 @@ function RtmpSettings({
         <p className="text-[9px] text-muted-foreground">Key cố định, không đổi trừ khi bấm tạo mới.</p>
       </div>
 
-      {/* RTMP URLs — one per local IP */}
+      {/* RTMP Server URL */}
       <div className="space-y-1.5">
         <Label className="text-[10px] text-muted-foreground uppercase">RTMP Server URL (nhập vào DJI Fly)</Label>
-        {rtmpUrls.length === 0 && (
-          <p className="text-[10px] text-muted-foreground">Đang lấy IP...</p>
-        )}
-        {rtmpUrls.map(({ label, url }) => (
-          <div key={url} className="space-y-0.5">
-            <p className="text-[9px] text-muted-foreground">{label}</p>
+        {!tunnelReady ? (
+          <div className="flex items-center gap-2 rounded bg-yellow-500/10 border border-yellow-500/20 px-2 py-1.5">
+            <span className="h-2 w-2 rounded-full bg-yellow-400 animate-pulse shrink-0" />
+            <span className="text-[10px] text-yellow-300">Đang tạo tunnel công khai… (vài giây)</span>
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            <p className="text-[9px] text-green-400 font-medium">✓ Tunnel sẵn sàng — dùng URL này trong DJI Fly</p>
             <div className="flex gap-1.5">
               <div className="flex-1 bg-muted/50 rounded px-2 py-1 font-mono text-[10px] break-all leading-tight select-all">
-                {url}
+                {publicRtmpUrl}
               </div>
               <Button
                 variant="outline" size="icon" className="h-7 w-7 shrink-0"
-                onClick={() => copyToClipboard(url)}
+                onClick={() => publicRtmpUrl && copyToClipboard(publicRtmpUrl)}
                 title="Sao chép URL"
               >
-                {copiedUrl === url
+                {copiedUrl === publicRtmpUrl
                   ? <Check className="w-3.5 h-3.5 text-green-500" />
                   : <Copy className="w-3.5 h-3.5" />}
               </Button>
             </div>
           </div>
-        ))}
+        )}
         {streamKey && (
           <p className="text-[9px] text-muted-foreground font-mono pt-0.5">
             Stream key: <span className="text-foreground">{streamKey}</span>
