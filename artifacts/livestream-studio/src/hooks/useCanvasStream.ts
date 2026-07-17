@@ -40,8 +40,8 @@ const JPEG_QUALITY = 0.75;
  * at that size takes 500ms+ on mobile — scaling to 1280×720 first makes
  * toBlob() ~4× faster, letting frames actually arrive at 24 fps.
  */
-const ENCODE_WIDTH = 1280;
-const ENCODE_HEIGHT = 720;
+const ENCODE_WIDTH = 854;
+const ENCODE_HEIGHT = 480;
 
 export function useCanvasStream(
   sources: Source[],

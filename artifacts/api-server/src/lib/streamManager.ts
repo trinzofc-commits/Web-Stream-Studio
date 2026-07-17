@@ -131,7 +131,12 @@ class StreamManager {
     // Server-side encoding: client sends raw JPEG frames, FFmpeg encodes H.264.
     // This eliminates VP8/MediaRecorder on the client, cutting mobile CPU load.
     const args = [
-      // Video input: JPEG frames piped from browser canvas at TARGET_FPS
+      // use_wallclock_as_timestamps: assign real wall-clock time to each frame
+      // as it arrives, NOT sequential timestamps derived from -framerate.
+      // Without this, image2pipe timestamps don't match real time and RTMP
+      // receivers (Facebook, YouTube) see the stream running at 0.1–0.2x
+      // speed, causing buffering or the stream not appearing at all.
+      "-use_wallclock_as_timestamps", "1",
       "-framerate", "24",
       "-f", "image2pipe",
       "-vcodec", "mjpeg",
@@ -144,12 +149,13 @@ class StreamManager {
       "-c:v", "libx264",
       "-preset", "ultrafast",
       "-tune", "zerolatency",
-      "-b:v", "2500k",
-      "-maxrate", "3000k",
-      "-bufsize", "2500k", // 1× bitrate — smaller buffer = less pipeline delay
+      "-b:v", "1500k",
+      "-maxrate", "1800k",
+      "-bufsize", "1500k",
       "-pix_fmt", "yuv420p",
-      "-g", "30",          // keyframe every 1s at 30fps (lower = faster seek/start)
-      "-r", "30",          // force 30fps output
+      "-g", "48",          // keyframe every 2s at 24fps
+      "-r", "24",          // force 24fps output
+      "-vsync", "cfr",     // constant frame rate: duplicate/drop to hold 24fps
       // Audio encoding — stereo required by Facebook/YouTube
       "-c:a", "aac",
       "-b:a", "128k",
