@@ -523,8 +523,8 @@ export const GetStreamConfigResponse = zod.object({
 
 
 export const SaveStreamConfigBody = zod.object({
-  "rtmpUrl": zod.string().min(1),
-  "streamKey": zod.string().min(1),
+  "rtmpUrl": zod.string(),
+  "streamKey": zod.string(),
   "platform": zod.enum(['facebook', 'youtube', 'twitch', 'custom']).optional()
 })
 

@@ -911,10 +911,8 @@ components:
       properties:
         rtmpUrl:
           type: string
-          minLength: 1
         streamKey:
           type: string
-          minLength: 1
         platform:
           type: string
           enum: [facebook, youtube, twitch, custom]
