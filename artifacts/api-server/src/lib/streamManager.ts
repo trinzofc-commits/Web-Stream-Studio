@@ -119,12 +119,13 @@ class StreamManager {
       "-f", "lavfi",
       "-i", "aevalsrc=0:s=44100",
       // Video: transcode VP8→H264 for RTMP
+      // ultrafast preset is critical — veryfast was falling behind (speed<1x)
       "-c:v", "libx264",
-      "-preset", "veryfast",
+      "-preset", "ultrafast",
       "-tune", "zerolatency",
-      "-b:v", "4000k",
-      "-maxrate", "4500k",
-      "-bufsize", "8000k",
+      "-b:v", "2500k",
+      "-maxrate", "3000k",
+      "-bufsize", "6000k",
       "-pix_fmt", "yuv420p",
       "-g", "60",          // keyframe every 2s at 30fps
       "-r", "30",          // force 30fps output

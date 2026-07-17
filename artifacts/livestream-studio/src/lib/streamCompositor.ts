@@ -22,7 +22,8 @@ type Source = {
 export class StreamCompositor {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
-  private rafId: number | null = null;
+  private intervalId: ReturnType<typeof setInterval> | null = null;
+  private readonly fps = 30;
   private sources: Source[] = [];
 
   // Resource caches
@@ -117,20 +118,20 @@ export class StreamCompositor {
     }
   }
 
-  /** Start the render loop */
+  /** Start the render loop using setInterval so it runs at full rate even
+   *  when the tab is backgrounded or the canvas is off-screen.
+   *  requestAnimationFrame throttles to ~1fps in background tabs, which causes
+   *  FFmpeg to receive almost no real frames and duplicate them → choppy stream. */
   start() {
-    const loop = () => {
-      this.drawFrame();
-      this.rafId = requestAnimationFrame(loop);
-    };
-    this.rafId = requestAnimationFrame(loop);
+    if (this.intervalId !== null) return;
+    this.intervalId = setInterval(() => this.drawFrame(), 1000 / this.fps);
   }
 
   /** Stop rendering and release camera streams */
   stop() {
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
     }
     for (const stream of this.cameraStreams.values()) {
       stream.getTracks().forEach((t) => t.stop());
