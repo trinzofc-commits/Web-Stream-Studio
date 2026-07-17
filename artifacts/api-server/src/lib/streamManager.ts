@@ -125,9 +125,9 @@ class StreamManager {
       "-tune", "zerolatency",
       "-b:v", "2500k",
       "-maxrate", "3000k",
-      "-bufsize", "6000k",
+      "-bufsize", "2500k", // 1× bitrate — smaller buffer = less pipeline delay
       "-pix_fmt", "yuv420p",
-      "-g", "60",          // keyframe every 2s at 30fps
+      "-g", "30",          // keyframe every 1s at 30fps (lower = faster seek/start)
       "-r", "30",          // force 30fps output
       // Audio encoding
       "-c:a", "aac",

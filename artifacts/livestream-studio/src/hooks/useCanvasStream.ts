@@ -103,7 +103,7 @@ export function useCanvasStream(
       const mimeType = getBestMimeType();
       const recorder = new MediaRecorder(canvasStream, {
         mimeType,
-        videoBitsPerSecond: 4_000_000,
+        videoBitsPerSecond: 2_500_000, // match FFmpeg target bitrate
       });
       recorderRef.current = recorder;
 
@@ -122,8 +122,8 @@ export function useCanvasStream(
         if (isStreamingRef.current) stopStream();
       };
 
-      // 5. Start encoding — 250 ms chunks for low latency
-      recorder.start(250);
+      // 5. Start encoding — 100ms chunks to minimize pipeline latency
+      recorder.start(100);
     } catch {
       stopStream();
     }
