@@ -39,7 +39,7 @@ export function createRtmpServer(rtmpPort = 1935): void {
       ping: 30,
       ping_timeout: 60,
     },
-    logType: 0, // suppress internal NMS console noise
+    logType: 3, // verbose — show all connections
   });
 
   // Fired once the publisher is confirmed live

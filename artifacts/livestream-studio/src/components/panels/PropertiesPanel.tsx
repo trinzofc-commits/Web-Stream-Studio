@@ -733,9 +733,25 @@ function RtmpSettings({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Poll server/info until tunnel is ready
+  // Poll server/info continuously — bore port changes on every restart
+  const refreshTunnelUrl = React.useCallback(() => {
+    fetch('/api/server/info')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.publicRtmpUrl) {
+          setPublicRtmpUrl(d.publicRtmpUrl);
+          setTunnelReady(true);
+        } else {
+          setTunnelReady(false);
+        }
+      })
+      .catch(() => setTunnelReady(false));
+  }, []);
+
   React.useEffect(() => {
     let mounted = true;
+    let timerId: ReturnType<typeof setTimeout>;
+
     const poll = () => {
       fetch('/api/server/info')
         .then((r) => r.json())
@@ -746,13 +762,14 @@ function RtmpSettings({
             setTunnelReady(true);
           } else {
             setTunnelReady(false);
-            setTimeout(poll, 2000); // retry until tunnel is up
           }
+          // keep polling every 15s to catch port changes after restart
+          timerId = setTimeout(poll, 15000);
         })
-        .catch(() => { if (mounted) setTimeout(poll, 3000); });
+        .catch(() => { if (mounted) { timerId = setTimeout(poll, 5000); } });
     };
     poll();
-    return () => { mounted = false; };
+    return () => { mounted = false; clearTimeout(timerId); };
   }, []);
 
   // Poll live status every 3s when a stream key is set
@@ -814,15 +831,20 @@ function RtmpSettings({
 
       {/* RTMP Server URL */}
       <div className="space-y-1.5">
-        <Label className="text-[10px] text-muted-foreground uppercase">RTMP Server URL (nhập vào DJI Fly)</Label>
+        <div className="flex items-center justify-between">
+          <Label className="text-[10px] text-muted-foreground uppercase">RTMP Server URL</Label>
+          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={refreshTunnelUrl} title="Tải lại URL mới nhất">
+            <RefreshCw className="w-3 h-3 text-muted-foreground" />
+          </Button>
+        </div>
         {!tunnelReady ? (
           <div className="flex items-center gap-2 rounded bg-yellow-500/10 border border-yellow-500/20 px-2 py-1.5">
             <span className="h-2 w-2 rounded-full bg-yellow-400 animate-pulse shrink-0" />
-            <span className="text-[10px] text-yellow-300">Đang tạo tunnel công khai… (vài giây)</span>
+            <span className="text-[10px] text-yellow-300">Đang tạo tunnel… bấm 🔄 nếu lâu quá</span>
           </div>
         ) : (
           <div className="space-y-0.5">
-            <p className="text-[9px] text-green-400 font-medium">✓ Tunnel sẵn sàng — dùng URL này trong DJI Fly</p>
+            <p className="text-[9px] text-green-400 font-medium">✓ Sẵn sàng — nếu báo lỗi bấm 🔄 để lấy URL mới</p>
             <div className="flex gap-1.5">
               <div className="flex-1 bg-muted/50 rounded px-2 py-1 font-mono text-[10px] break-all leading-tight select-all">
                 {publicRtmpUrl}
