@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, asc } from "drizzle-orm";
+import { randomBytes } from "crypto";
 import { db, sourcesTable } from "@workspace/db";
 import { serialize } from "../lib/serialize";
 import {
@@ -46,9 +47,16 @@ router.post("/scenes/:sceneId/sources", async (req, res): Promise<void> => {
   }
   const existing = await db.select().from(sourcesTable).where(eq(sourcesTable.sceneId, params.data.sceneId));
   const sortOrder = existing.length;
+
+  // Auto-generate a fixed stream key for RTMP sources if not provided
+  let settings = (parsed.data.settings ?? {}) as Record<string, unknown>;
+  if (parsed.data.type === "rtmp" && !settings.streamKey) {
+    settings = { ...settings, streamKey: randomBytes(4).toString("hex") };
+  }
+
   const [source] = await db
     .insert(sourcesTable)
-    .values({ ...parsed.data, sceneId: params.data.sceneId, sortOrder, settings: parsed.data.settings ?? {} })
+    .values({ ...parsed.data, sceneId: params.data.sceneId, sortOrder, settings })
     .returning();
   res.status(201).json(CreateSourceResponse.parse(serialize(source)));
 });

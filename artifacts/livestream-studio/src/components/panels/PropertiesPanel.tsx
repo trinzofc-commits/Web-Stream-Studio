@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button';
 import { useQueryClient } from '@tanstack/react-query';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { FolderOpen, Plus, Minus, Copy, Check, Wifi, WifiOff } from 'lucide-react';
+import { FolderOpen, Plus, Minus, Copy, Check, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 
 interface Props {
   onOpenMediaLibrary?: (onSelect: (url: string) => void) => void;
@@ -760,16 +760,34 @@ function RtmpSettings({
 
   return (
     <div className="space-y-3">
-      {/* Stream key */}
+      {/* Stream key — auto-generated, read-only */}
       <div className="space-y-1">
-        <Label className="text-[10px] text-muted-foreground uppercase">Stream Key</Label>
-        <Input
-          className="h-7 text-xs font-mono"
-          placeholder="vd: dji"
-          defaultValue={streamKey}
-          key={streamKey}
-          onBlur={(e) => commit('streamKey', e.target.value.trim())}
-        />
+        <Label className="text-[10px] text-muted-foreground uppercase">Stream Key (tự động)</Label>
+        <div className="flex gap-1.5">
+          <div className="flex-1 bg-muted/50 rounded px-2 py-1 font-mono text-[11px] tracking-widest select-all">
+            {streamKey || <span className="text-muted-foreground italic text-[10px]">đang tạo...</span>}
+          </div>
+          <Button
+            variant="outline" size="icon" className="h-7 w-7 shrink-0"
+            onClick={() => streamKey && copyToClipboard(streamKey)}
+            title="Sao chép stream key"
+          >
+            {copiedUrl === streamKey
+              ? <Check className="w-3.5 h-3.5 text-green-500" />
+              : <Copy className="w-3.5 h-3.5" />}
+          </Button>
+          <Button
+            variant="outline" size="icon" className="h-7 w-7 shrink-0"
+            onClick={() => {
+              const newKey = Math.random().toString(36).slice(2, 10);
+              commit('streamKey', newKey);
+            }}
+            title="Tạo key mới"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+        <p className="text-[9px] text-muted-foreground">Key cố định, không đổi trừ khi bấm tạo mới.</p>
       </div>
 
       {/* RTMP URLs — one per local IP */}
