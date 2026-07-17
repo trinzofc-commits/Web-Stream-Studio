@@ -392,6 +392,9 @@ export class StreamCompositor {
     this.imageCache.set(url, img);
   }
 
+  /** Expose raw canvas so callers can capture JPEG frames without MediaRecorder */
+  getCanvas(): HTMLCanvasElement { return this.canvas; }
+
   private qrUrl(data: string, fg?: string, bg?: string) {
     const fgHex = (fg ?? '#000000').replace('#', '');
     const bgHex = (bg ?? '#ffffff').replace('#', '');

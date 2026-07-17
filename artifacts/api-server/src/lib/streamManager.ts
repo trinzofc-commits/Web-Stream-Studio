@@ -106,14 +106,14 @@ class StreamManager {
     const target = `${rtmpUrl.replace(/\/$/, "")}/${streamKey}`;
     logger.info({ target }, "Stream client connected — spawning FFmpeg with canvas input");
 
-    // FFmpeg reads WebM from stdin (browser canvas via MediaRecorder)
-    // Adds a silent audio track since the canvas stream is video-only.
+    // FFmpeg reads MJPEG frames from stdin (browser canvas toBlob → WebSocket).
+    // Server-side encoding: client sends raw JPEG frames, FFmpeg encodes H.264.
+    // This eliminates VP8/MediaRecorder on the client, cutting mobile CPU load.
     const args = [
-      // Video input: real-time WebM from browser MediaRecorder via stdin
-      // NOTE: no -re flag — that's for files, not real-time pipes
-      "-analyzeduration", "0",
-      "-probesize", "32",
-      "-f", "webm",
+      // Video input: JPEG frames piped from browser canvas at TARGET_FPS
+      "-framerate", "24",
+      "-f", "image2pipe",
+      "-vcodec", "mjpeg",
       "-i", "pipe:0",
       // Silent audio (canvas stream is video-only; audio handled separately)
       "-f", "lavfi",

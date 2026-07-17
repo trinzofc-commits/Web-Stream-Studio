@@ -1,7 +1,12 @@
 /**
  * useCanvasStream
  * Watches stream state and, when streaming starts, captures the scene canvas
- * via StreamCompositor → MediaRecorder → WebSocket binary → backend FFmpeg stdin.
+ * via StreamCompositor → JPEG frames → WebSocket binary → backend FFmpeg stdin.
+ *
+ * Server-side encoding: instead of MediaRecorder (VP8 on client CPU), we send
+ * raw JPEG frames over WebSocket and let FFmpeg on the server encode H.264.
+ * This cuts mobile CPU usage significantly — the phone only composites canvas,
+ * it never runs a software video encoder.
  */
 import { useEffect, useRef, useCallback } from 'react';
 import { StreamCompositor } from '@/lib/streamCompositor';
@@ -26,14 +31,10 @@ function getWsUrl(path: string): string {
   return `${proto}//${window.location.host}${path}`;
 }
 
-function getBestMimeType(): string {
-  const candidates = [
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=vp8',
-    'video/webm',
-  ];
-  return candidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
-}
+/** Target frame rate for JPEG capture. Lower = less CPU on client. */
+const TARGET_FPS = 24;
+/** JPEG quality 0–1. Lower = less CPU + bandwidth, small visual difference. */
+const JPEG_QUALITY = 0.75;
 
 export function useCanvasStream(
   sources: Source[],
@@ -42,7 +43,7 @@ export function useCanvasStream(
   canvasHeight: number,
 ) {
   const compositorRef = useRef<StreamCompositor | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  const captureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const isStreamingRef = useRef(false);
 
@@ -55,8 +56,10 @@ export function useCanvasStream(
     if (!isStreamingRef.current) return;
     isStreamingRef.current = false;
 
-    try { recorderRef.current?.stop(); } catch {}
-    recorderRef.current = null;
+    if (captureIntervalRef.current !== null) {
+      clearInterval(captureIntervalRef.current);
+      captureIntervalRef.current = null;
+    }
 
     try { wsRef.current?.close(); } catch {}
     wsRef.current = null;
@@ -70,60 +73,56 @@ export function useCanvasStream(
     isStreamingRef.current = true;
 
     try {
-      // 1. Build compositor with correct canvas dimensions and start rendering
+      // 1. Build compositor and start rendering
       const compositor = new StreamCompositor(w, h);
       compositor.updateSources(currentSources);
       compositor.start();
       compositorRef.current = compositor;
 
-      // 2. Get canvas MediaStream (video only — audio handled server-side)
-      const canvasStream = compositor.captureStream(30);
-
-      // 3. Open binary WebSocket to backend BEFORE starting MediaRecorder
+      // 2. Open binary WebSocket to backend
       const ws = new WebSocket(getWsUrl('/ws?role=stream'));
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
       await new Promise<void>((resolve, reject) => {
         ws.onopen = () => {
-          console.log('[stream] WebSocket connected to', ws.url);
+          console.log('[stream] WebSocket connected (server-side encoding mode)');
           resolve();
         };
         ws.onerror = (e) => {
           console.error('[stream] WebSocket error', e);
           reject(new Error('WebSocket failed to connect'));
         };
-        ws.onclose = (e) => {
-          console.warn('[stream] WebSocket closed before open', e.code, e.reason);
-        };
         setTimeout(() => reject(new Error('WebSocket timeout')), 8000);
       });
 
-      // 4. Create MediaRecorder and wire data → WebSocket
-      const mimeType = getBestMimeType();
-      const recorder = new MediaRecorder(canvasStream, {
-        mimeType,
-        videoBitsPerSecond: 2_500_000, // match FFmpeg target bitrate
-      });
-      recorderRef.current = recorder;
+      ws.onclose = () => { if (isStreamingRef.current) stopStream(); };
+      ws.onerror = () => { if (isStreamingRef.current) stopStream(); };
 
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-          ws.send(e.data);
-        }
-      };
+      // 3. Capture JPEG frames from canvas and pipe to server
+      // toBlob is async; we track whether a capture is in-flight to avoid
+      // queuing frames faster than we can encode/send them.
+      const canvas = compositor.getCanvas();
+      let capturing = false;
 
-      recorder.onerror = () => stopStream();
+      captureIntervalRef.current = setInterval(() => {
+        if (capturing || !isStreamingRef.current) return;
+        if (ws.readyState !== WebSocket.OPEN) return;
 
-      ws.onclose = () => {
-        if (isStreamingRef.current) stopStream();
-      };
-      ws.onerror = () => {
-        if (isStreamingRef.current) stopStream();
-      };
+        capturing = true;
+        canvas.toBlob(
+          (blob) => {
+            capturing = false;
+            if (!blob || ws.readyState !== WebSocket.OPEN) return;
+            blob.arrayBuffer().then((buf) => {
+              if (ws.readyState === WebSocket.OPEN) ws.send(buf);
+            }).catch(() => {});
+          },
+          'image/jpeg',
+          JPEG_QUALITY,
+        );
+      }, Math.floor(1000 / TARGET_FPS));
 
-      // 5. Start encoding — 100ms chunks to minimize pipeline latency
-      recorder.start(100);
     } catch {
       stopStream();
     }
