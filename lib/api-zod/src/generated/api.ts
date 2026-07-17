@@ -351,7 +351,7 @@ export const ListSourcesResponseItem = zod.object({
   "id": zod.number(),
   "sceneId": zod.number(),
   "name": zod.string(),
-  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark']),
+  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark', 'rtmp']),
   "settings": zod.record(zod.string(), zod.unknown()).optional().describe('JSON blob of type-specific settings'),
   "x": zod.number(),
   "y": zod.number(),
@@ -379,7 +379,7 @@ export const CreateSourceParams = zod.object({
 
 export const CreateSourceBody = zod.object({
   "name": zod.string().min(1),
-  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark']),
+  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark', 'rtmp']),
   "settings": zod.record(zod.string(), zod.unknown()).optional(),
   "x": zod.number().optional(),
   "y": zod.number().optional(),
@@ -398,7 +398,7 @@ export const CreateSourceResponse = zod.object({
   "id": zod.number(),
   "sceneId": zod.number(),
   "name": zod.string(),
-  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark']),
+  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark', 'rtmp']),
   "settings": zod.record(zod.string(), zod.unknown()).optional().describe('JSON blob of type-specific settings'),
   "x": zod.number(),
   "y": zod.number(),
@@ -422,7 +422,7 @@ export const UpdateSourceParams = zod.object({
 
 export const UpdateSourceBody = zod.object({
   "name": zod.string().optional(),
-  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark']).optional(),
+  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark', 'rtmp']).optional(),
   "settings": zod.record(zod.string(), zod.unknown()).optional(),
   "x": zod.number().optional(),
   "y": zod.number().optional(),
@@ -444,7 +444,7 @@ export const UpdateSourceResponse = zod.object({
   "id": zod.number(),
   "sceneId": zod.number(),
   "name": zod.string(),
-  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark']),
+  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark', 'rtmp']),
   "settings": zod.record(zod.string(), zod.unknown()).optional().describe('JSON blob of type-specific settings'),
   "x": zod.number(),
   "y": zod.number(),
@@ -489,7 +489,7 @@ export const UpdateSourceLayerResponse = zod.object({
   "id": zod.number(),
   "sceneId": zod.number(),
   "name": zod.string(),
-  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark']),
+  "type": zod.enum(['camera', 'display', 'image', 'video', 'audio', 'browser', 'text', 'color', 'qrcode', 'clock', 'countdown', 'slideshow', 'videoPlaylist', 'audioPlaylist', 'pdf', 'logo', 'watermark', 'rtmp']),
   "settings": zod.record(zod.string(), zod.unknown()).optional().describe('JSON blob of type-specific settings'),
   "x": zod.number(),
   "y": zod.number(),

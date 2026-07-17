@@ -27,4 +27,5 @@ export const SourceInputType = {
   pdf: 'pdf',
   logo: 'logo',
   watermark: 'watermark',
+  rtmp: 'rtmp',
 } as const;
