@@ -150,10 +150,11 @@ class StreamManager {
       "-pix_fmt", "yuv420p",
       "-g", "30",          // keyframe every 1s at 30fps (lower = faster seek/start)
       "-r", "30",          // force 30fps output
-      // Audio encoding
+      // Audio encoding — stereo required by Facebook/YouTube
       "-c:a", "aac",
       "-b:a", "128k",
       "-ar", "44100",
+      "-ac", "2",
       // Map streams explicitly
       "-map", "0:v:0",
       "-map", "1:a:0",

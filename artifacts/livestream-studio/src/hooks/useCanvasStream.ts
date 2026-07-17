@@ -35,6 +35,13 @@ function getWsUrl(path: string): string {
 const TARGET_FPS = 24;
 /** JPEG quality 0–1. Lower = less CPU + bandwidth, small visual difference. */
 const JPEG_QUALITY = 0.75;
+/**
+ * Encode resolution sent to server. Canvas may be 1920×1080 but toBlob()
+ * at that size takes 500ms+ on mobile — scaling to 1280×720 first makes
+ * toBlob() ~4× faster, letting frames actually arrive at 24 fps.
+ */
+const ENCODE_WIDTH = 1280;
+const ENCODE_HEIGHT = 720;
 
 export function useCanvasStream(
   sources: Source[],
@@ -99,10 +106,15 @@ export function useCanvasStream(
       ws.onclose = () => { if (isStreamingRef.current) stopStream(); };
       ws.onerror = () => { if (isStreamingRef.current) stopStream(); };
 
-      // 3. Capture JPEG frames from canvas and pipe to server
-      // toBlob is async; we track whether a capture is in-flight to avoid
-      // queuing frames faster than we can encode/send them.
-      const canvas = compositor.getCanvas();
+      // 3. Capture JPEG frames from canvas and pipe to server.
+      // We scale the compositor canvas down to ENCODE_WIDTH×ENCODE_HEIGHT before
+      // calling toBlob() — this makes toBlob() ~4× faster on mobile (1280×720
+      // is fast; 1920×1080 can take 500ms+ per frame, starving FFmpeg).
+      const srcCanvas = compositor.getCanvas();
+      const encCanvas = document.createElement('canvas');
+      encCanvas.width = ENCODE_WIDTH;
+      encCanvas.height = ENCODE_HEIGHT;
+      const encCtx = encCanvas.getContext('2d')!;
       let capturing = false;
 
       captureIntervalRef.current = setInterval(() => {
@@ -110,7 +122,9 @@ export function useCanvasStream(
         if (ws.readyState !== WebSocket.OPEN) return;
 
         capturing = true;
-        canvas.toBlob(
+        // Scale down: draw compositor canvas → smaller encode canvas
+        encCtx.drawImage(srcCanvas, 0, 0, ENCODE_WIDTH, ENCODE_HEIGHT);
+        encCanvas.toBlob(
           (blob) => {
             capturing = false;
             if (!blob || ws.readyState !== WebSocket.OPEN) return;
