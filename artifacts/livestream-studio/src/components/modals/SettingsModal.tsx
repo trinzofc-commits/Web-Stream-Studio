@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
@@ -8,13 +8,37 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Eye, EyeOff, Monitor, Smartphone } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Eye, EyeOff, Monitor, Smartphone, Copy, Check, Wifi, WifiOff, Loader2, Signal } from 'lucide-react';
 import {
   useGetStreamConfig, useSaveStreamConfig,
   useGetOutputConfig, useSaveOutputConfig,
 } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+
+/** Polls /api/stream/rtmp-ingress every 3 s while the modal is open */
+function useRtmpIngress(enabled: boolean) {
+  const [data, setData] = useState<{ url: string | null; status: string; activeKeys: string[] }>({
+    url: null, status: 'disconnected', activeKeys: [],
+  });
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch('/api/stream/rtmp-ingress');
+        if (res.ok) setData(await res.json());
+      } catch { /* ignore */ }
+    };
+    fetchStatus();
+    timerRef.current = setInterval(fetchStatus, 3000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [enabled]);
+
+  return data;
+}
 
 const PLATFORM_RTMP: Record<string, string> = {
   facebook: 'rtmps://live-api-s.facebook.com:443/rtmp/',
@@ -52,6 +76,19 @@ export function SettingsModal({ open, onOpenChange }: Props) {
     recordingFormat: 'mp4',
   });
   const [showKey, setShowKey] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [ingressKey, setIngressKey] = useState('live');
+  const ingress = useRtmpIngress(open);
+
+  const ingressUrl = ingress.url ? `${ingress.url}/${ingressKey}` : null;
+
+  const copyUrl = () => {
+    if (!ingressUrl) return;
+    navigator.clipboard.writeText(ingressUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   useEffect(() => {
     if (streamConfig) {
@@ -84,8 +121,8 @@ export function SettingsModal({ open, onOpenChange }: Props) {
   };
 
   const handleSave = () => {
-    const p1 = saveStreamConfig.mutateAsync({ data: streamData });
-    const p2 = saveOutputConfig.mutateAsync({ data: outputData });
+    const p1 = saveStreamConfig.mutateAsync({ data: streamData as any });
+    const p2 = saveOutputConfig.mutateAsync({ data: outputData as any });
     Promise.all([p1, p2])
       .then(() => {
         queryClient.invalidateQueries({ queryKey: ['/api/stream/config'] });
@@ -106,13 +143,13 @@ export function SettingsModal({ open, onOpenChange }: Props) {
         <div className="flex flex-1 overflow-hidden min-h-0">
           <Tabs defaultValue="stream" className="flex w-full min-h-0">
             <TabsList className="flex flex-col h-full w-44 bg-card border-r border-border rounded-none justify-start p-2 gap-0.5 items-stretch shrink-0">
-              {['general', 'stream', 'output', 'video'].map((tab) => (
+              {['general', 'stream', 'output', 'video', 'rtmp-in'].map((tab) => (
                 <TabsTrigger
                   key={tab}
                   value={tab}
                   className="justify-start capitalize data-[state=active]:bg-primary/20 data-[state=active]:text-primary rounded px-3 py-1.5 text-sm"
                 >
-                  {tab}
+                  {tab === 'rtmp-in' ? 'RTMP Input' : tab}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -257,6 +294,101 @@ export function SettingsModal({ open, onOpenChange }: Props) {
                       </SelectContent>
                     </Select>
                   </Row>
+                </div>
+              </TabsContent>
+
+              {/* RTMP INPUT */}
+              <TabsContent value="rtmp-in" className="mt-0 space-y-5">
+                <h3 className="font-semibold text-base border-b border-border pb-2">RTMP Input (DJI Fly / OBS / etc.)</h3>
+
+                {/* Tunnel status */}
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/40 border border-border">
+                  {ingress.status === 'connected'
+                    ? <Wifi className="w-5 h-5 text-green-400 shrink-0" />
+                    : ingress.status === 'starting'
+                    ? <Loader2 className="w-5 h-5 text-yellow-400 animate-spin shrink-0" />
+                    : <WifiOff className="w-5 h-5 text-red-400 shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium">
+                      {ingress.status === 'connected' ? 'Tunnel sẵn sàng' :
+                       ingress.status === 'starting'  ? 'Đang kết nối tunnel…' :
+                       'Tunnel chưa kết nối'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {ingress.status === 'connected'
+                        ? 'Máy chủ đang nhận RTMP qua bore.pub'
+                        : 'Server tự động kết nối lại sau vài giây'}
+                    </p>
+                  </div>
+                  <Badge variant={ingress.status === 'connected' ? 'default' : 'secondary'} className="shrink-0 text-xs">
+                    {ingress.status}
+                  </Badge>
+                </div>
+
+                {/* Stream key field */}
+                <div className="space-y-1.5">
+                  <Label>Stream Key (tuỳ chọn)</Label>
+                  <Input
+                    value={ingressKey}
+                    onChange={(e) => setIngressKey(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
+                    placeholder="live"
+                    className="font-mono text-sm w-48"
+                  />
+                  <p className="text-xs text-muted-foreground">Nhập bất kỳ ký tự nào bạn muốn — dùng trong RTMP URL bên dưới</p>
+                </div>
+
+                {/* Public RTMP URL */}
+                <div className="space-y-1.5">
+                  <Label>RTMP URL để nhập vào DJI Fly / OBS</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={ingressUrl ?? (ingress.status === 'starting' ? 'Đang lấy URL…' : 'Chưa có — đang kết nối tunnel')}
+                      className="font-mono text-xs flex-1 text-muted-foreground bg-muted"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="shrink-0"
+                      disabled={!ingressUrl}
+                      onClick={copyUrl}
+                      title="Copy URL"
+                    >
+                      {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Active streams */}
+                {ingress.activeKeys.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5">
+                      <Signal className="w-3.5 h-3.5 text-green-400" />
+                      Đang nhận stream
+                    </Label>
+                    <div className="flex flex-wrap gap-2">
+                      {ingress.activeKeys.map((k) => (
+                        <Badge key={k} variant="default" className="font-mono text-xs bg-green-600">
+                          {k}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* How-to instructions */}
+                <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3 text-sm">
+                  <p className="font-semibold text-xs uppercase tracking-wide text-muted-foreground">Hướng dẫn</p>
+                  <ol className="space-y-2 text-sm text-muted-foreground list-decimal list-inside">
+                    <li>Chờ trạng thái <span className="text-green-400 font-medium">connected</span></li>
+                    <li>Copy URL phía trên</li>
+                    <li>Mở <strong>DJI Fly</strong> → Camera → Live → Custom RTMP → dán URL vào</li>
+                    <li>Hoặc mở <strong>OBS</strong> → Settings → Stream → Custom → Server = URL trên, Stream Key = để trống</li>
+                    <li>Bắt đầu stream từ thiết bị — ứng dụng sẽ nhận tín hiệu qua RTMP source</li>
+                  </ol>
+                  <p className="text-xs text-muted-foreground pt-1 border-t border-border">
+                    ⚠️ Port ngẫu nhiên, thay đổi mỗi lần server restart. Luôn copy URL mới từ đây.
+                  </p>
                 </div>
               </TabsContent>
 

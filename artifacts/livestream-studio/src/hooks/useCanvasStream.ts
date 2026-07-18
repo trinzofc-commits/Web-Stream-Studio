@@ -19,11 +19,11 @@ type Source = {
   y: number;
   width: number;
   height: number;
-  opacity: number;
-  rotation: number;
+  opacity?: number;
+  rotation?: number;
   visible: boolean;
   sortOrder: number;
-  settings: Record<string, any> | null;
+  settings?: Record<string, any> | null;
 };
 
 function getWsUrl(path: string): string {
@@ -36,12 +36,30 @@ const TARGET_FPS = 24;
 /** JPEG quality 0–1. Lower = less CPU + bandwidth, small visual difference. */
 const JPEG_QUALITY = 0.75;
 /**
- * Encode resolution sent to server. Canvas may be 1920×1080 but toBlob()
- * at that size takes 500ms+ on mobile — scaling to 1280×720 first makes
- * toBlob() ~4× faster, letting frames actually arrive at 24 fps.
+ * Maximum long-side pixels for the encode canvas sent to the server.
+ * The actual encode size is derived from the compositor canvas dimensions
+ * while preserving aspect ratio, so portrait and landscape are both correct.
+ * Canvas may be 1920×1080 but toBlob() at that size takes 500ms+ on mobile —
+ * scaling to max 1280px on the long side makes toBlob() ~4× faster.
  */
-const ENCODE_WIDTH = 854;
-const ENCODE_HEIGHT = 480;
+const MAX_ENCODE_LONG_SIDE = 1280;
+
+/** Calculate encode canvas size that preserves aspect ratio and ensures even
+ *  pixel counts (required for H.264 yuv420p). */
+function calcEncodeSize(w: number, h: number): [number, number] {
+  let ew: number, eh: number;
+  if (w >= h) {
+    ew = Math.min(w, MAX_ENCODE_LONG_SIDE);
+    eh = Math.round(ew * h / w);
+  } else {
+    eh = Math.min(h, MAX_ENCODE_LONG_SIDE);
+    ew = Math.round(eh * w / h);
+  }
+  // H.264 yuv420p requires even dimensions
+  ew = ew % 2 === 0 ? ew : ew - 1;
+  eh = eh % 2 === 0 ? eh : eh - 1;
+  return [ew, eh];
+}
 
 export function useCanvasStream(
   sources: Source[],
@@ -107,9 +125,10 @@ export function useCanvasStream(
       ws.onerror = () => { if (isStreamingRef.current) stopStream(); };
 
       // 3. Capture JPEG frames from canvas and pipe to server.
-      // We scale the compositor canvas down to ENCODE_WIDTH×ENCODE_HEIGHT before
-      // calling toBlob() — this makes toBlob() ~4× faster on mobile (1280×720
-      // is fast; 1920×1080 can take 500ms+ per frame, starving FFmpeg).
+      // We scale the compositor canvas down to at most 1280px on the long side
+      // while preserving aspect ratio, so portrait/landscape are both correct.
+      // toBlob() at full 1920×1080 takes 500ms+ on mobile — this makes it ~4× faster.
+      const [ENCODE_WIDTH, ENCODE_HEIGHT] = calcEncodeSize(w, h);
       const srcCanvas = compositor.getCanvas();
       const encCanvas = document.createElement('canvas');
       encCanvas.width = ENCODE_WIDTH;

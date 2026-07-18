@@ -133,10 +133,22 @@ export function CanvasPreview() {
           }
         }}
       >
+        {/* Wrapper sized to the visual (scaled) dimensions so layout is correct.
+            CSS transform doesn't affect layout flow — without this wrapper, the
+            full-resolution div (e.g. 1920×1080) would overflow the container. */}
+        <div style={{ width: canvasW * scale, height: canvasH * scale, position: 'relative', flexShrink: 0 }}>
         <div
           data-canvas="true"
           className="relative bg-black shadow-2xl ring-1 ring-white/10 overflow-hidden"
-          style={{ width: canvasW, height: canvasH, transform: `scale(${scale})`, transformOrigin: 'center' }}
+          style={{
+            width: canvasW,
+            height: canvasH,
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
+            position: 'absolute',
+            top: 0,
+            left: 0,
+          }}
         >
           {gridVisible && (
             <div
@@ -169,6 +181,7 @@ export function CanvasPreview() {
             );
           })}
         </div>
+        </div>
       </div>
     </div>
   );
@@ -187,6 +200,7 @@ interface SourceBoxProps {
 
 function DraggableResizableSource({ source, isSelected, scale, onSelect, onSave }: SourceBoxProps) {
   const [rect, setRect] = useState({ x: source.x, y: source.y, width: source.width, height: source.height });
+  const [interactMode, setInteractMode] = useState(false);
   const dragRef = useRef<{
     mode: 'move' | HandleDir;
     startMouse: { x: number; y: number };
@@ -202,6 +216,7 @@ function DraggableResizableSource({ source, isSelected, scale, onSelect, onSave 
 
   const beginDrag = (e: React.PointerEvent, mode: 'move' | HandleDir) => {
     if (source.locked) return;
+    if (interactMode) return; // pass events through to iframe
     e.stopPropagation();
     e.preventDefault();
     onSelect();
@@ -253,6 +268,15 @@ function DraggableResizableSource({ source, isSelected, scale, onSelect, onSave 
   };
 
   const opacity = typeof source.opacity === 'number' ? source.opacity / 100 : 1;
+  const isBrowser = source.type === 'browser';
+
+  // Exit interact mode when pressing Escape
+  React.useEffect(() => {
+    if (!interactMode) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setInteractMode(false); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [interactMode]);
 
   return (
     <div
@@ -266,18 +290,42 @@ function DraggableResizableSource({ source, isSelected, scale, onSelect, onSave 
         transform: `rotate(${source.rotation ?? 0}deg)`,
         transformOrigin: 'center',
         zIndex: source.sortOrder + 1,
-        outline: isSelected ? '2px solid hsl(var(--primary))' : '1px solid transparent',
-        cursor: source.locked ? 'default' : 'grab',
+        outline: interactMode
+          ? '2px solid #f59e0b'
+          : isSelected ? '2px solid hsl(var(--primary))' : '1px solid transparent',
+        cursor: interactMode ? 'default' : source.locked ? 'default' : 'grab',
       }}
       onPointerDown={(e) => beginDrag(e, 'move')}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onDoubleClick={() => { if (isBrowser) { onSelect(); setInteractMode(true); } }}
     >
-      <SourceContent source={source} />
+      <SourceContent source={source} interactMode={interactMode} />
 
-      {/* Resize handles — only when selected & not locked */}
-      {isSelected && !source.locked &&
+      {/* Interact mode badge — browser sources only */}
+      {isBrowser && isSelected && !interactMode && (
+        <button
+          className="absolute bottom-1.5 right-1.5 z-30 flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-black/70 text-white border border-white/20 hover:bg-amber-500/80 transition-colors"
+          style={{ pointerEvents: 'auto' }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); setInteractMode(true); }}
+          title="Bật chế độ tương tác (double-click cũng được)"
+        >
+          ☝ Interact
+        </button>
+      )}
+      {isBrowser && interactMode && (
+        <div
+          className="absolute top-1.5 right-1.5 z-30 flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500 text-black"
+          style={{ pointerEvents: 'none' }}
+        >
+          ☝ Đang tương tác · ESC để thoát
+        </div>
+      )}
+
+      {/* Resize handles — only when selected, not locked, not in interact mode */}
+      {isSelected && !source.locked && !interactMode &&
         HANDLES.map(({ dir, style }) => (
           <div
             key={dir}
@@ -291,7 +339,7 @@ function DraggableResizableSource({ source, isSelected, scale, onSelect, onSave 
 }
 
 /* Renders the visible content of a source based on its type */
-function SourceContent({ source }: { source: any }) {
+function SourceContent({ source, interactMode }: { source: any; interactMode?: boolean }) {
   const s = source.settings ?? {};
 
   const base = 'w-full h-full flex items-center justify-center overflow-hidden';
@@ -343,9 +391,10 @@ function SourceContent({ source }: { source: any }) {
         <iframe
           src={s.url}
           className="w-full h-full border-none"
-          style={{ pointerEvents: 'none', background: '#fff' }}
+          style={{ pointerEvents: interactMode ? 'auto' : 'none', background: '#000' }}
           title={source.name}
-          sandbox="allow-scripts allow-same-origin"
+          allow="autoplay; fullscreen; picture-in-picture; camera; microphone"
+          referrerPolicy="no-referrer-when-downgrade"
         />
       ) : <PlaceholderBox label="Browser" color="#1e3a5f" />;
 
@@ -377,12 +426,19 @@ function SourceContent({ source }: { source: any }) {
 
     case 'logo':
       return s.url ? (
-        <img src={s.url} alt="logo" className="w-full h-full" style={{ objectFit: 'contain', opacity: s.opacity ?? 1 }} />
+        // Global transform opacity is applied by parent div; settings.opacity is
+        // applied additionally via parent globalAlpha in the compositor, so we
+        // wrap in a sub-div with settings opacity to stay in sync.
+        <div className="w-full h-full" style={{ opacity: s.opacity ?? 1 }}>
+          <img src={s.url} alt="logo" className="w-full h-full" style={{ objectFit: 'contain' }} />
+        </div>
       ) : <PlaceholderBox label="Logo" color="#2a2a2a" icon="🏷" />;
 
     case 'watermark':
       return s.url ? (
-        <img src={s.url} alt="watermark" className="w-full h-full" style={{ objectFit: 'contain', opacity: s.opacity ?? 0.5 }} />
+        <div className="w-full h-full" style={{ opacity: s.opacity ?? 0.5 }}>
+          <img src={s.url} alt="watermark" className="w-full h-full" style={{ objectFit: 'contain' }} />
+        </div>
       ) : <PlaceholderBox label="Watermark" color="#1e1e1e" icon="💧" />;
 
     case 'videoPlaylist':

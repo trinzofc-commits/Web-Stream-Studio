@@ -198,6 +198,7 @@ export const SourceType = {
   pdf: 'pdf',
   logo: 'logo',
   watermark: 'watermark',
+  rtmp: 'rtmp',
 } as const;
 
 /**
@@ -245,6 +246,7 @@ export const SourceInputType = {
   pdf: 'pdf',
   logo: 'logo',
   watermark: 'watermark',
+  rtmp: 'rtmp',
 } as const;
 
 export type SourceInputSettings = { [key: string]: unknown };
@@ -283,6 +285,7 @@ export const SourceUpdateType = {
   pdf: 'pdf',
   logo: 'logo',
   watermark: 'watermark',
+  rtmp: 'rtmp',
 } as const;
 
 export type SourceUpdateSettings = { [key: string]: unknown };
@@ -327,9 +330,7 @@ export const StreamConfigInputPlatform = {
 } as const;
 
 export interface StreamConfigInput {
-  /** @minLength 1 */
   rtmpUrl: string;
-  /** @minLength 1 */
   streamKey: string;
   platform?: StreamConfigInputPlatform;
 }

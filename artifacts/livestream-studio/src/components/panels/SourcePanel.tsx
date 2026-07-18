@@ -6,13 +6,14 @@ import {
   useDeleteSource,
   useUpdateSource,
   useUpdateSourceLayer,
+  useGetOutputConfig,
   getListSourcesQueryKey,
 } from '@workspace/api-client-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, ContextMenuSeparator } from '@/components/ui/context-menu';
-import { Plus, Trash2, Copy, Eye, EyeOff, Lock, Unlock, GripVertical, Video, Monitor, Image as ImageIcon, Film, Music, Globe, Type, QrCode, Clock, Timer, LayoutGrid, List, Music2, FileText, Bookmark, Stamp, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown, Signal } from 'lucide-react';
+import { Plus, Trash2, Copy, Eye, EyeOff, Lock, Unlock, GripVertical, Video, Monitor, Image as ImageIcon, Film, Music, Globe, Type, QrCode, Clock, Timer, LayoutGrid, List, Music2, FileText, Bookmark, Stamp, ChevronUp, ChevronDown, ChevronsUp, ChevronsDown } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 
 const sourceIcons: Record<string, any> = {
@@ -33,7 +34,13 @@ const sourceIcons: Record<string, any> = {
   pdf: FileText,
   logo: Bookmark,
   watermark: Stamp,
-  rtmp: Signal,
+};
+
+const RESOLUTION_BASE: Record<string, [number, number]> = {
+  '720p':  [1280, 720],
+  '1080p': [1920, 1080],
+  '1440p': [2560, 1440],
+  '4K':    [3840, 2160],
 };
 
 export function SourcePanel() {
@@ -45,6 +52,14 @@ export function SourcePanel() {
   const { data: sources = [] } = useListSources(activeSceneId!, {
     query: { enabled: !!activeSceneId },
   });
+  const { data: outputConfig } = useGetOutputConfig();
+
+  // Derive canvas dimensions so new sources default to filling the canvas
+  const resolution = (outputConfig as any)?.resolution ?? '1080p';
+  const aspectRatio = (outputConfig as any)?.aspectRatio ?? 'landscape';
+  const [baseW, baseH] = RESOLUTION_BASE[resolution] ?? [1920, 1080];
+  const canvasW = aspectRatio === 'portrait' ? baseH : baseW;
+  const canvasH = aspectRatio === 'portrait' ? baseW : baseH;
 
   const createSource = useCreateSource();
   const deleteSource = useDeleteSource();
@@ -61,8 +76,8 @@ export function SourcePanel() {
           type,
           x: 0,
           y: 0,
-          width: 1280,
-          height: 720,
+          width: canvasW,
+          height: canvasH,
           opacity: 100,
           rotation: 0,
         },

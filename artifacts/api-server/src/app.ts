@@ -1,3 +1,5 @@
+import path from "path";
+import { fileURLToPath } from "url";
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
@@ -42,6 +44,22 @@ app.use(
   express.static(HLS_ROOT),
 );
 
+// Health check — must be before the main router
+app.get("/api/healthz", (_req, res) => {
+  res.json({ ok: true });
+});
+
 app.use("/api", router);
+
+// In production, serve the built frontend and handle SPA client-side routing.
+// This must come AFTER all /api routes so the API takes priority.
+if (process.env.NODE_ENV === "production") {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const publicDir = path.join(__dirname, "public");
+  app.use(express.static(publicDir));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(publicDir, "index.html"));
+  });
+}
 
 export default app;

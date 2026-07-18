@@ -13,6 +13,8 @@ import {
   GetStreamStatsSummaryResponse,
 } from "@workspace/api-zod";
 import { streamManager } from "../lib/streamManager";
+import { getPublicRtmpUrl, getTunnelStatus } from "../lib/boreTunnel";
+import { getActiveStreams } from "../lib/rtmpServer";
 
 const router: IRouter = Router();
 
@@ -52,7 +54,11 @@ router.post("/stream/start", async (req, res): Promise<void> => {
     return;
   }
   try {
-    await streamManager.start(parsed.data.rtmpUrl, parsed.data.streamKey);
+    // Read output config so FFmpeg uses the user-configured fps and bitrate
+    const [outputConfig] = await db.select().from(outputConfigTable).limit(1);
+    const fps = outputConfig?.fps ?? 30;
+    const videoBitrate = outputConfig?.videoBitrate ?? 4000;
+    await streamManager.start(parsed.data.rtmpUrl, parsed.data.streamKey, fps, videoBitrate);
     const stats = streamManager.getStats();
     res.json(StartStreamResponse.parse(stats));
   } catch (err: any) {
@@ -80,6 +86,14 @@ router.get("/stream/status", async (_req, res): Promise<void> => {
 
 router.get("/stream/stats/summary", async (_req, res): Promise<void> => {
   res.json(GetStreamStatsSummaryResponse.parse(streamManager.getSummary()));
+});
+
+/** Returns the public RTMP ingress URL for external sources (DJI Fly, OBS, etc.) */
+router.get("/stream/rtmp-ingress", async (_req, res): Promise<void> => {
+  const url = getPublicRtmpUrl();
+  const status = getTunnelStatus();
+  const activeKeys = await getActiveStreams();
+  res.json({ url, status, activeKeys });
 });
 
 export default router;

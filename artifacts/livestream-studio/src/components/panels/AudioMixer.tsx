@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 let sharedAudioCtx: AudioContext | null = null;
 let sharedMicStream: MediaStream | null = null;
 let micSourceNode: MediaStreamAudioSourceNode | null = null;
-const micAnalysers: Set<{ analyser: AnalyserNode; buf: Uint8Array; onLevel: (l: number, r: number) => void }> = new Set();
+const micAnalysers: Set<{ analyser: AnalyserNode; buf: Uint8Array<ArrayBuffer>; onLevel: (l: number, r: number) => void }> = new Set();
 
 async function getMicAnalyser(onLevel: (l: number, r: number) => void): Promise<() => void> {
   try {
@@ -28,7 +28,7 @@ async function getMicAnalyser(onLevel: (l: number, r: number) => void): Promise<
     const analyser = sharedAudioCtx.createAnalyser();
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.6;
-    const buf = new Uint8Array(analyser.frequencyBinCount);
+    const buf = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
     micSourceNode!.connect(analyser);
     const entry = { analyser, buf, onLevel };
     micAnalysers.add(entry);
@@ -131,7 +131,7 @@ function AudioStrip({
 }) {
   const [vuL, setVuL] = useState(0);
   const [vuR, setVuR] = useState(0);
-  const animRef = useRef<number>();
+  const animRef = useRef<number | undefined>(undefined);
   const envRef = useRef({ l: 0, r: 0 });
 
   const isMic = track.name?.toLowerCase().includes('micro') || track.name?.toLowerCase().includes('mic');

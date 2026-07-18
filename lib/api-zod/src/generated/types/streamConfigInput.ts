@@ -8,9 +8,7 @@
 import type { StreamConfigInputPlatform } from './streamConfigInputPlatform';
 
 export interface StreamConfigInput {
-  /** @minLength 1 */
   rtmpUrl: string;
-  /** @minLength 1 */
   streamKey: string;
   platform?: StreamConfigInputPlatform;
 }

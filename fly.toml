@@ -1,0 +1,37 @@
+# fly.toml — generated for Livestream Studio
+# Replace "your-app-name" with your actual fly.io app name.
+# Run: fly launch --no-deploy  (to register the app), then  fly deploy
+
+app = "your-app-name"
+primary_region = "sin"   # Singapore — closest to Vietnam. Change if needed.
+
+[build]
+  # Uses the Dockerfile at the repo root
+
+[env]
+  NODE_ENV = "production"
+  PORT     = "8080"
+
+# DATABASE_URL must be set as a fly secret, e.g.:
+#   fly secrets set DATABASE_URL="postgres://..."
+# If you use fly Postgres, attach it with:
+#   fly postgres attach <pg-app-name>
+
+[http_service]
+  internal_port        = 8080
+  force_https          = true
+  auto_stop_machines   = "stop"
+  auto_start_machines  = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval     = "30s"
+    method       = "GET"
+    path         = "/api/healthz"
+    timeout      = "5s"
+
+[[vm]]
+  memory   = "1gb"
+  cpu_kind = "shared"
+  cpus     = 1

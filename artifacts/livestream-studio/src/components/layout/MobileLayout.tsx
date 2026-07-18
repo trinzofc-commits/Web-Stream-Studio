@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Video, Layers, Radio, Music2, Settings, Plus, Trash2, Eye, EyeOff, Signal, Play, Square, RefreshCw, ChevronRight, Copy, Image as ImageIcon, Film, Type, LayoutGrid, Clock, Timer, QrCode, Bookmark, Stamp, List, Music, Globe, Maximize2, X } from 'lucide-react';
+import { Video, Layers, Radio, Music2, Settings, Plus, Trash2, Eye, EyeOff, Play, Square, RefreshCw, ChevronRight, Copy, Image as ImageIcon, Film, Type, LayoutGrid, Clock, Timer, QrCode, Bookmark, Stamp, List, Music, Globe, Maximize2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -23,7 +23,6 @@ import { MediaLibraryModal } from '@/components/modals/MediaLibraryModal';
 
 // Source types shown on mobile — only functional ones
 const MOBILE_SOURCE_TYPES: { type: string; label: string; icon: any }[] = [
-  { type: 'rtmp',     label: 'RTMP Input',    icon: Signal },
   { type: 'camera',   label: 'Camera',         icon: Video },
   { type: 'image',    label: 'Hình ảnh',       icon: ImageIcon },
   { type: 'video',    label: 'Video',          icon: Film },

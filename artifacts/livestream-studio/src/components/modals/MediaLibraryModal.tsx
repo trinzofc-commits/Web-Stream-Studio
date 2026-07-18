@@ -24,7 +24,7 @@ export function MediaLibraryModal({ open, onOpenChange, onSelect }: Props) {
   const [dragOver, setDragOver] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  const { data: uploads = [], isLoading } = useListUploads({ query: { enabled: open } });
+  const { data: uploads = [], isLoading } = useListUploads(undefined, { query: { enabled: open } });
   const deleteUpload = useDeleteUpload();
 
   const filtered = tab === 'all' ? uploads : uploads.filter((a) => a.type === tab);

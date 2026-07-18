@@ -107,7 +107,7 @@ export const getHealthCheckQueryKey = () => {
     }
 
 
-export const getHealthCheckQueryOptions = <TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getHealthCheckQueryOptions = <TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>( options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -134,7 +134,7 @@ export type HealthCheckQueryError = ErrorType<unknown>
  */
 
 export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof healthCheck>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -184,7 +184,7 @@ export const getListProjectsQueryKey = () => {
     }
 
 
-export const getListProjectsQueryOptions = <TData = Awaited<ReturnType<typeof listProjects>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListProjectsQueryOptions = <TData = Awaited<ReturnType<typeof listProjects>>, TError = ErrorType<unknown>>( options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -211,7 +211,7 @@ export type ListProjectsQueryError = ErrorType<unknown>
  */
 
 export function useListProjects<TData = Awaited<ReturnType<typeof listProjects>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listProjects>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -332,7 +332,7 @@ export const getGetProjectQueryKey = (id: number,) => {
     }
 
 
-export const getGetProjectQueryOptions = <TData = Awaited<ReturnType<typeof getProject>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetProjectQueryOptions = <TData = Awaited<ReturnType<typeof getProject>>, TError = ErrorType<void>>(id: number, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -359,7 +359,7 @@ export type GetProjectQueryError = ErrorType<void>
  */
 
 export function useGetProject<TData = Awaited<ReturnType<typeof getProject>>, TError = ErrorType<void>>(
- id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ id: number, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getProject>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -552,7 +552,7 @@ export const getExportProjectQueryKey = (id: number,) => {
     }
 
 
-export const getExportProjectQueryOptions = <TData = Awaited<ReturnType<typeof exportProject>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getExportProjectQueryOptions = <TData = Awaited<ReturnType<typeof exportProject>>, TError = ErrorType<void>>(id: number, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -579,7 +579,7 @@ export type ExportProjectQueryError = ErrorType<void>
  */
 
 export function useExportProject<TData = Awaited<ReturnType<typeof exportProject>>, TError = ErrorType<void>>(
- id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ id: number, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof exportProject>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -700,7 +700,7 @@ export const getListScenesQueryKey = (projectId: number,) => {
     }
 
 
-export const getListScenesQueryOptions = <TData = Awaited<ReturnType<typeof listScenes>>, TError = ErrorType<unknown>>(projectId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScenes>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListScenesQueryOptions = <TData = Awaited<ReturnType<typeof listScenes>>, TError = ErrorType<unknown>>(projectId: number, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listScenes>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -727,7 +727,7 @@ export type ListScenesQueryError = ErrorType<unknown>
  */
 
 export function useListScenes<TData = Awaited<ReturnType<typeof listScenes>>, TError = ErrorType<unknown>>(
- projectId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScenes>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ projectId: number, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listScenes>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -1134,7 +1134,7 @@ export const getListSourcesQueryKey = (sceneId: number,) => {
     }
 
 
-export const getListSourcesQueryOptions = <TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorType<unknown>>(sceneId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListSourcesQueryOptions = <TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorType<unknown>>(sceneId: number, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1161,7 +1161,7 @@ export type ListSourcesQueryError = ErrorType<unknown>
  */
 
 export function useListSources<TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorType<unknown>>(
- sceneId: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ sceneId: number, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -1498,7 +1498,7 @@ export const getGetStreamConfigQueryKey = () => {
     }
 
 
-export const getGetStreamConfigQueryOptions = <TData = Awaited<ReturnType<typeof getStreamConfig>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetStreamConfigQueryOptions = <TData = Awaited<ReturnType<typeof getStreamConfig>>, TError = ErrorType<unknown>>( options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getStreamConfig>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1525,7 +1525,7 @@ export type GetStreamConfigQueryError = ErrorType<unknown>
  */
 
 export function useGetStreamConfig<TData = Awaited<ReturnType<typeof getStreamConfig>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getStreamConfig>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -1859,7 +1859,7 @@ export const getGetStreamStatusQueryKey = () => {
     }
 
 
-export const getGetStreamStatusQueryOptions = <TData = Awaited<ReturnType<typeof getStreamStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetStreamStatusQueryOptions = <TData = Awaited<ReturnType<typeof getStreamStatus>>, TError = ErrorType<unknown>>( options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getStreamStatus>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1886,7 +1886,7 @@ export type GetStreamStatusQueryError = ErrorType<unknown>
  */
 
 export function useGetStreamStatus<TData = Awaited<ReturnType<typeof getStreamStatus>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getStreamStatus>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -1936,7 +1936,7 @@ export const getGetOutputConfigQueryKey = () => {
     }
 
 
-export const getGetOutputConfigQueryOptions = <TData = Awaited<ReturnType<typeof getOutputConfig>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOutputConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetOutputConfigQueryOptions = <TData = Awaited<ReturnType<typeof getOutputConfig>>, TError = ErrorType<unknown>>( options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getOutputConfig>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -1963,7 +1963,7 @@ export type GetOutputConfigQueryError = ErrorType<unknown>
  */
 
 export function useGetOutputConfig<TData = Awaited<ReturnType<typeof getOutputConfig>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getOutputConfig>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getOutputConfig>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -2084,7 +2084,7 @@ export const getListAudioTracksQueryKey = () => {
     }
 
 
-export const getListAudioTracksQueryOptions = <TData = Awaited<ReturnType<typeof listAudioTracks>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAudioTracks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListAudioTracksQueryOptions = <TData = Awaited<ReturnType<typeof listAudioTracks>>, TError = ErrorType<unknown>>( options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listAudioTracks>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -2111,7 +2111,7 @@ export type ListAudioTracksQueryError = ErrorType<unknown>
  */
 
 export function useListAudioTracks<TData = Awaited<ReturnType<typeof listAudioTracks>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAudioTracks>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listAudioTracks>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -2382,7 +2382,7 @@ export const getListUploadsQueryKey = (params?: ListUploadsParams,) => {
     }
 
 
-export const getListUploadsQueryOptions = <TData = Awaited<ReturnType<typeof listUploads>>, TError = ErrorType<unknown>>(params?: ListUploadsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUploads>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListUploadsQueryOptions = <TData = Awaited<ReturnType<typeof listUploads>>, TError = ErrorType<unknown>>(params?: ListUploadsParams, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listUploads>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -2409,7 +2409,7 @@ export type ListUploadsQueryError = ErrorType<unknown>
  */
 
 export function useListUploads<TData = Awaited<ReturnType<typeof listUploads>>, TError = ErrorType<unknown>>(
- params?: ListUploadsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUploads>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: ListUploadsParams, options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof listUploads>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
@@ -2530,7 +2530,7 @@ export const getGetStreamStatsSummaryQueryKey = () => {
     }
 
 
-export const getGetStreamStatsSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getStreamStatsSummary>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamStatsSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetStreamStatsSummaryQueryOptions = <TData = Awaited<ReturnType<typeof getStreamStatsSummary>>, TError = ErrorType<unknown>>( options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getStreamStatsSummary>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -2557,7 +2557,7 @@ export type GetStreamStatsSummaryQueryError = ErrorType<unknown>
  */
 
 export function useGetStreamStatsSummary<TData = Awaited<ReturnType<typeof getStreamStatsSummary>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStreamStatsSummary>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+  options?: { query?:Omit<UseQueryOptions<Awaited<ReturnType<typeof getStreamStatsSummary>>, TError, TData>, 'queryKey'> & { queryKey?: QueryKey }, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 

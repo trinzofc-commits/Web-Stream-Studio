@@ -13,7 +13,7 @@ export const sourcesTable = pgTable("sources", {
   width: real("width").notNull().default(640),
   height: real("height").notNull().default(360),
   rotation: real("rotation").notNull().default(0),
-  opacity: real("opacity").notNull().default(1),
+  opacity: real("opacity").notNull().default(100),
   visible: boolean("visible").notNull().default(true),
   locked: boolean("locked").notNull().default(false),
   sortOrder: integer("sort_order").notNull().default(0),

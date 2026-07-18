@@ -796,7 +796,7 @@ components:
           type: string
         type:
           type: string
-          enum: [camera, display, image, video, audio, browser, text, color, qrcode, clock, countdown, slideshow, videoPlaylist, audioPlaylist, pdf, logo, watermark]
+          enum: [camera, display, image, video, audio, browser, text, color, qrcode, clock, countdown, slideshow, videoPlaylist, audioPlaylist, pdf, logo, watermark, rtmp]
         settings:
           type: object
           description: JSON blob of type-specific settings
@@ -835,7 +835,7 @@ components:
           minLength: 1
         type:
           type: string
-          enum: [camera, display, image, video, audio, browser, text, color, qrcode, clock, countdown, slideshow, videoPlaylist, audioPlaylist, pdf, logo, watermark]
+          enum: [camera, display, image, video, audio, browser, text, color, qrcode, clock, countdown, slideshow, videoPlaylist, audioPlaylist, pdf, logo, watermark, rtmp]
         settings:
           type: object
           additionalProperties: true
@@ -859,7 +859,7 @@ components:
           type: string
         type:
           type: string
-          enum: [camera, display, image, video, audio, browser, text, color, qrcode, clock, countdown, slideshow, videoPlaylist, audioPlaylist, pdf, logo, watermark]
+          enum: [camera, display, image, video, audio, browser, text, color, qrcode, clock, countdown, slideshow, videoPlaylist, audioPlaylist, pdf, logo, watermark, rtmp]
         settings:
           type: object
           additionalProperties: true

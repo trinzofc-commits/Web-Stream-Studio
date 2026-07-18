@@ -3,7 +3,6 @@
  * Renders all scene sources onto a hidden HTML5 canvas at the configured
  * resolution and aspect ratio, and exposes a MediaStream via captureStream().
  */
-import Hls from 'hls.js';
 
 type Source = {
   id: number;
@@ -13,11 +12,11 @@ type Source = {
   y: number;
   width: number;
   height: number;
-  opacity: number;
-  rotation: number;
+  opacity?: number;
+  rotation?: number;
   visible: boolean;
   sortOrder: number;
-  settings: Record<string, any> | null;
+  settings?: Record<string, any> | null;
 };
 
 export class StreamCompositor {
@@ -32,7 +31,14 @@ export class StreamCompositor {
   private videoCache = new Map<number, HTMLVideoElement>(); // key: source.id
   private cameraCache = new Map<string, HTMLVideoElement>(); // key: deviceId
   private cameraStreams = new Map<string, MediaStream>();
-  private rtmpCache = new Map<number, { video: HTMLVideoElement; hls: Hls | null; streamKey: string }>(); // key: source.id
+  private browserCache = new Map<number, {
+    container: HTMLDivElement;
+    iframe: HTMLIFrameElement;
+    snapshot: ImageBitmap | null;
+    url: string;
+    capturing: boolean;
+    lastCapture: number;
+  }>(); // key: source.id
 
   constructor(width = 1280, height = 720) {
     this.canvas = document.createElement('canvas');
@@ -94,35 +100,30 @@ export class StreamCompositor {
         }
       }
 
-      // RTMP Input (DJI Fly / external encoder → HLS playback)
-      if (src.type === 'rtmp' && s.streamKey) {
-        const existing = this.rtmpCache.get(src.id);
-        // Recreate if streamKey changed
-        if (existing && existing.streamKey !== s.streamKey) {
-          existing.hls?.destroy();
-          existing.video.pause();
-          existing.video.src = '';
-          this.rtmpCache.delete(src.id);
+      // Browser source — hidden iframe + async snapshot capture
+      if (src.type === 'browser' && s.url) {
+        const existing = this.browserCache.get(src.id);
+        // Recreate if URL changed
+        if (existing && existing.url !== s.url) {
+          existing.iframe.src = 'about:blank';
+          existing.container.remove();
+          existing.snapshot?.close();
+          this.browserCache.delete(src.id);
         }
-        if (!this.rtmpCache.has(src.id)) {
-          const vid = document.createElement('video');
-          vid.autoplay = true;
-          vid.muted = true;
-          vid.playsInline = true;
-          const hlsUrl = `/api/hls/${s.streamKey}/index.m3u8`;
-
-          if (Hls.isSupported()) {
-            const hls = new Hls({ lowLatencyMode: true, backBufferLength: 5 });
-            hls.loadSource(hlsUrl);
-            hls.attachMedia(vid);
-            hls.on(Hls.Events.MANIFEST_PARSED, () => vid.play().catch(() => {}));
-            this.rtmpCache.set(src.id, { video: vid, hls, streamKey: s.streamKey });
-          } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
-            // Safari native HLS
-            vid.src = hlsUrl;
-            vid.play().catch(() => {});
-            this.rtmpCache.set(src.id, { video: vid, hls: null, streamKey: s.streamKey });
-          }
+        if (!this.browserCache.has(src.id)) {
+          const frameW = s.frameWidth ?? 1280;
+          const frameH = s.frameHeight ?? 720;
+          const container = document.createElement('div');
+          container.style.cssText = `position:fixed;left:-${frameW + 100}px;top:0;width:${frameW}px;height:${frameH}px;overflow:hidden;pointer-events:none;z-index:-9999;`;
+          const iframe = document.createElement('iframe');
+          iframe.src = s.url;
+          iframe.style.cssText = `width:${frameW}px;height:${frameH}px;border:none;`;
+          iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+          container.appendChild(iframe);
+          document.body.appendChild(container);
+          const entry = { container, iframe, snapshot: null as ImageBitmap | null, url: s.url as string, capturing: false, lastCapture: 0 };
+          this.browserCache.set(src.id, entry);
+          iframe.onload = () => this.captureBrowserSnapshot(src.id, s.css as string | undefined);
         }
       }
 
@@ -177,12 +178,86 @@ export class StreamCompositor {
       vid.src = '';
     }
     this.videoCache.clear();
-    for (const { video, hls } of this.rtmpCache.values()) {
-      hls?.destroy();
-      video.pause();
-      video.src = '';
+    for (const entry of this.browserCache.values()) {
+      entry.iframe.src = 'about:blank';
+      entry.container.remove();
+      entry.snapshot?.close();
     }
-    this.rtmpCache.clear();
+    this.browserCache.clear();
+  }
+
+  // ─── Browser source snapshot capture ─────────────────────────────────────
+
+  /** Async: render iframe content into an ImageBitmap via SVG foreignObject.
+   *  Works for same-origin pages; silently skips cross-origin (security). */
+  private captureBrowserSnapshot(sourceId: number, css?: string) {
+    const entry = this.browserCache.get(sourceId);
+    if (!entry || entry.capturing) return;
+
+    let doc: Document | null = null;
+    try {
+      doc = entry.iframe.contentDocument;
+    } catch {
+      // cross-origin — cannot access document
+      return;
+    }
+    if (!doc || !doc.documentElement) return;
+
+    entry.capturing = true;
+    entry.lastCapture = Date.now();
+
+    try {
+      // Inject custom CSS if provided
+      if (css) {
+        const styleId = '__compositor_css__';
+        let styleEl = doc.getElementById(styleId) as HTMLStyleElement | null;
+        if (!styleEl) {
+          styleEl = doc.createElement('style');
+          styleEl.id = styleId;
+          doc.head?.appendChild(styleEl);
+        }
+        styleEl.textContent = css;
+      }
+
+      const w = entry.iframe.offsetWidth || 1280;
+      const h = entry.iframe.offsetHeight || 720;
+
+      // Serialize DOM to SVG foreignObject (same-origin only)
+      const serializer = new XMLSerializer();
+      const htmlStr = serializer.serializeToString(doc.documentElement);
+      const svgStr = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
+        `<foreignObject width="100%" height="100%">` +
+        `<html xmlns="http://www.w3.org/1999/xhtml">${htmlStr}</html>` +
+        `</foreignObject></svg>`;
+
+      const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        createImageBitmap(img)
+          .then((bitmap) => {
+            const cur = this.browserCache.get(sourceId);
+            if (cur) {
+              cur.snapshot?.close();
+              cur.snapshot = bitmap;
+            }
+          })
+          .catch(() => {})
+          .finally(() => {
+            URL.revokeObjectURL(url);
+            const cur = this.browserCache.get(sourceId);
+            if (cur) cur.capturing = false;
+          });
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        const cur = this.browserCache.get(sourceId);
+        if (cur) cur.capturing = false;
+      };
+      img.src = url;
+    } catch {
+      entry.capturing = false;
+    }
   }
 
   /** Get a live MediaStream from the canvas */
@@ -191,6 +266,66 @@ export class StreamCompositor {
   }
 
   // ─── Private rendering ───────────────────────────────────────────────────
+
+  /** Draw image mimicking CSS objectFit: contain — preserves aspect ratio,
+   *  letter/pillar-boxes to fit inside the destination rectangle. */
+  private drawContain(
+    img: HTMLImageElement | HTMLVideoElement,
+    x: number, y: number, w: number, h: number,
+  ) {
+    const naturalW = img instanceof HTMLImageElement ? img.naturalWidth  : img.videoWidth;
+    const naturalH = img instanceof HTMLImageElement ? img.naturalHeight : img.videoHeight;
+    if (!naturalW || !naturalH) return;
+
+    const imgAspect = naturalW / naturalH;
+    const boxAspect = w / h;
+    let dw: number, dh: number, dx: number, dy: number;
+
+    if (imgAspect > boxAspect) {
+      // wider than box → fit by width, add top/bottom bars
+      dw = w;
+      dh = w / imgAspect;
+      dx = x;
+      dy = y + (h - dh) / 2;
+    } else {
+      // taller than box → fit by height, add left/right bars
+      dh = h;
+      dw = h * imgAspect;
+      dx = x + (w - dw) / 2;
+      dy = y;
+    }
+    this.ctx.drawImage(img, dx, dy, dw, dh);
+  }
+
+  /** Draw image mimicking CSS objectFit: cover — fills the destination
+   *  rectangle by cropping the image edges. */
+  private drawCover(
+    img: HTMLImageElement | HTMLVideoElement,
+    x: number, y: number, w: number, h: number,
+  ) {
+    const naturalW = img instanceof HTMLImageElement ? img.naturalWidth  : img.videoWidth;
+    const naturalH = img instanceof HTMLImageElement ? img.naturalHeight : img.videoHeight;
+    if (!naturalW || !naturalH) return;
+
+    const imgAspect = naturalW / naturalH;
+    const boxAspect = w / h;
+    let sx: number, sy: number, sw: number, sh: number;
+
+    if (imgAspect > boxAspect) {
+      // image wider → crop left and right
+      sh = naturalH;
+      sw = naturalH * boxAspect;
+      sx = (naturalW - sw) / 2;
+      sy = 0;
+    } else {
+      // image taller → crop top and bottom
+      sw = naturalW;
+      sh = naturalW / boxAspect;
+      sx = 0;
+      sy = (naturalH - sh) / 2;
+    }
+    this.ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+  }
 
   private drawFrame() {
     const { ctx } = this;
@@ -253,7 +388,20 @@ export class StreamCompositor {
         case 'watermark': {
           const img = s.url ? this.imageCache.get(s.url) : null;
           if (img?.complete && img.naturalWidth > 0) {
-            ctx.drawImage(img, x, y, width, height);
+            // For logo/watermark, apply settings.opacity on top of globalAlpha
+            // (mirrors the CSS opacity on the sub-div in CanvasPreview)
+            if ((source.type === 'logo' || source.type === 'watermark') && s.opacity != null && s.opacity < 1) {
+              const prevAlpha = ctx.globalAlpha;
+              ctx.globalAlpha = prevAlpha * (s.opacity as number);
+              this.drawContain(img, x, y, width, height);
+              ctx.globalAlpha = prevAlpha;
+            } else {
+              const fit = source.type === 'image' ? (s.fit ?? 'contain') : 'contain';
+              if (fit === 'cover') this.drawCover(img, x, y, width, height);
+              else if (fit === 'fill') ctx.drawImage(img, x, y, width, height);
+              else this.drawContain(img, x, y, width, height);
+            }
+
           } else {
             this.placeholder(ctx, x, y, width, height, '#3b4a6b');
           }
@@ -261,6 +409,7 @@ export class StreamCompositor {
         }
 
         case 'camera': {
+          // CSS preview uses objectFit: cover for camera (fills box, crops edges)
           const key = s.deviceId ?? 'default';
           const vid = this.cameraCache.get(key);
           if (vid && vid.readyState >= 2 && vid.videoWidth > 0) {
@@ -268,10 +417,11 @@ export class StreamCompositor {
               ctx.save();
               ctx.translate(x + width, y);
               ctx.scale(-1, 1);
-              ctx.drawImage(vid, 0, 0, width, height);
+              // draw mirrored: cover into (0,0,width,height) then translate back
+              this.drawCover(vid, 0, 0, width, height);
               ctx.restore();
             } else {
-              ctx.drawImage(vid, x, y, width, height);
+              this.drawCover(vid, x, y, width, height);
             }
           } else {
             this.placeholder(ctx, x, y, width, height, '#1a3a2a');
@@ -281,9 +431,10 @@ export class StreamCompositor {
 
         case 'video':
         case 'videoPlaylist': {
+          // CSS preview uses objectFit: contain for video
           const vid = this.videoCache.get(source.id);
           if (vid && vid.readyState >= 2 && vid.videoWidth > 0) {
-            ctx.drawImage(vid, x, y, width, height);
+            this.drawContain(vid, x, y, width, height);
           } else {
             this.placeholder(ctx, x, y, width, height, '#2a1e3a');
           }
@@ -353,14 +504,16 @@ export class StreamCompositor {
           break;
         }
 
-        case 'rtmp': {
-          const entry = this.rtmpCache.get(source.id);
-          const vid = entry?.video;
-          if (vid && vid.readyState >= 2 && vid.videoWidth > 0) {
-            ctx.drawImage(vid, x, y, width, height);
+        case 'browser': {
+          const entry = this.browserCache.get(source.id);
+          if (entry?.snapshot) {
+            ctx.drawImage(entry.snapshot, x, y, width, height);
           } else {
-            // Show a "waiting" placeholder with signal icon color
-            this.placeholder(ctx, x, y, width, height, '#0a2a1a');
+            this.placeholder(ctx, x, y, width, height, '#1e3a5f');
+          }
+          // Trigger async refresh every ~100 ms (10 fps for browser content)
+          if (entry && !entry.capturing && Date.now() - entry.lastCapture > 100) {
+            this.captureBrowserSnapshot(source.id, source.settings?.css as string | undefined);
           }
           break;
         }
