@@ -1,5 +1,7 @@
 import { spawn, type ChildProcess } from "child_process";
 import { execSync } from "child_process";
+import type { Readable } from "stream";
+import { RtmpPublisher } from "./rtmpPublisher.js";
 import type { WebSocket } from "ws";
 import { logger } from "./logger";
 
@@ -30,6 +32,8 @@ class StreamManager {
   private statsInterval: ReturnType<typeof setInterval> | null = null;
   private cpuInterval: ReturnType<typeof setInterval> | null = null;
   private connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private publisher: RtmpPublisher | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private listeners: Set<(stats: StreamStats) => void> = new Set();
 
   // Pending config waiting for a stream client to connect
@@ -106,9 +110,17 @@ class StreamManager {
 
   /**
    * Called by the WebSocket server when a browser connects with role=stream.
-   * Spawns FFmpeg reading WebM from stdin and writing RTMP output.
+   * Connects RtmpPublisher (Node.js TLS) then spawns FFmpeg writing FLV to stdout.
    */
   attachStreamClient(ws: WebSocket): void {
+    // Allow re-attach if stream is live (handles Vite HMR page reloads)
+    if ((this.stats.state === "live" || this.stats.state === "connecting") && this.process) {
+      if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+      logger.info("Re-attaching stream WS to running session");
+      this._wireWs(ws);
+      return;
+    }
+
     if (this.stats.state !== "connecting" || !this.pendingConfig) {
       logger.warn("Stream client attached but not in connecting state — ignoring");
       ws.close();
@@ -117,146 +129,176 @@ class StreamManager {
 
     const { rtmpUrl, streamKey } = this.pendingConfig;
     this.pendingConfig = null;
+    if (this.connectTimeoutId) { clearTimeout(this.connectTimeoutId); this.connectTimeoutId = null; }
 
-    // Client arrived — cancel the watchdog timeout
-    if (this.connectTimeoutId) {
-      clearTimeout(this.connectTimeoutId);
-      this.connectTimeoutId = null;
-    }
-
-    const target = `${rtmpUrl.replace(/\/$/, "")}/${streamKey}`;
-    logger.info({ target }, "Stream client connected — spawning FFmpeg with canvas input");
-
-    // FFmpeg reads MJPEG frames from stdin (browser canvas toBlob → WebSocket).
-    // Server-side encoding: client sends raw JPEG frames, FFmpeg encodes H.264.
-    // This eliminates VP8/MediaRecorder on the client, cutting mobile CPU load.
-    const args = [
-      // use_wallclock_as_timestamps: assign real wall-clock time to each frame
-      // as it arrives, NOT sequential timestamps derived from -framerate.
-      // Without this, image2pipe timestamps don't match real time and RTMP
-      // receivers (Facebook, YouTube) see the stream running at 0.1–0.2x
-      // speed, causing buffering or the stream not appearing at all.
-      "-use_wallclock_as_timestamps", "1",
-      "-framerate", "24",
-      "-f", "image2pipe",
-      "-vcodec", "mjpeg",
-      "-i", "pipe:0",
-      // Silent audio (canvas stream is video-only; audio handled separately)
-      "-f", "lavfi",
-      "-i", "aevalsrc=0:s=44100",
-      // Video: transcode VP8→H264 for RTMP
-      // ultrafast preset is critical — veryfast was falling behind (speed<1x)
-      "-c:v", "libx264",
-      "-preset", "ultrafast",
-      "-tune", "zerolatency",
-      "-b:v", "1500k",
-      "-maxrate", "1800k",
-      "-bufsize", "1500k",
-      "-pix_fmt", "yuv420p",
-      "-g", "48",          // keyframe every 2s at 24fps
-      "-r", "24",          // force 24fps output
-      "-vsync", "cfr",     // constant frame rate: duplicate/drop to hold 24fps
-      // Audio encoding — stereo required by Facebook/YouTube
-      "-c:a", "aac",
-      "-b:a", "128k",
-      "-ar", "44100",
-      "-ac", "2",
-      // Map streams explicitly
-      "-map", "0:v:0",
-      "-map", "1:a:0",
-      // Output
-      "-f", "flv",
-      target,
-    ];
-
-    try {
-      this.process = spawn("ffmpeg", args, {
-        stdio: ["pipe", "ignore", "pipe"],
-      });
-      this.startTime = Date.now();
-      this.sessionFpsSamples = [];
-      this.sessionBitrateSamples = [];
-
-      this.process.stderr?.on("data", (data: Buffer) => {
-        const text = data.toString();
-        this.parseFFmpegStats(text);
-        // Log all FFmpeg output so errors are visible in server logs
-        logger.info({ ffmpeg: text.trim() }, "FFmpeg");
-      });
-
-      this.process.on("close", (code) => {
-        const uptime = this.startTime ? Math.floor((Date.now() - this.startTime) / 1000) : 0;
-        this.totalUptimeSeconds += uptime;
-        if (this.stats.state !== "stopping") {
-          this.stats.state = "error";
-          this.stats.errorMessage = `FFmpeg exited with code ${code}`;
-          logger.error({ code }, "FFmpeg process exited unexpectedly — check debug logs above for stderr");
-        } else {
-          this.stats.state = "idle";
-        }
-        this.cleanup();
-        this.emit();
-      });
-
-      this.process.on("error", (err) => {
-        this.stats.state = "error";
-        this.stats.errorMessage = err.message;
-        logger.error({ err }, "FFmpeg process error");
-        this.cleanup();
-        this.emit();
-      });
-
-      // Suppress EPIPE errors on stdin (FFmpeg can exit before ws closes)
-      this.process.stdin?.on("error", () => {});
-
-      // Pipe incoming WebSocket binary data to FFmpeg stdin
-      ws.on("message", (data: Buffer) => {
-        if (this.process?.stdin?.writable) {
-          try {
-            this.process.stdin.write(data);
-          } catch {
-            // ignore write errors if FFmpeg exited
-          }
-        }
-      });
-
-      ws.on("close", () => {
-        logger.info("Stream WebSocket client disconnected — stopping FFmpeg");
-        this.stop();
-      });
-
-      ws.on("error", () => {
-        this.stop();
-      });
-
-      // Transition to "live" after a short buffer period
-      setTimeout(() => {
-        if (this.stats.state === "connecting" && this.process) {
-          this.stats.state = "live";
-          this.totalSessions++;
-          this.lastStreamAt = new Date().toISOString();
-          this.emit();
-        }
-      }, 3000);
-
-      // Uptime + memory
-      this.statsInterval = setInterval(() => {
-        if (this.startTime) this.stats.uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
-        this.stats.memoryMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
-        this.emit();
-      }, 1000);
-
-      // CPU
-      this.cpuInterval = setInterval(() => {
-        this.stats.cpuUsage = this.getCpuUsage();
-      }, 3000);
-
-    } catch (err: any) {
+    // Run async setup inside a non-async method
+    this._doAttach(ws, rtmpUrl, streamKey).catch((err: any) => {
+      logger.error({ err }, "Stream attach failed");
       this.stats.state = "error";
-      this.stats.errorMessage = err.message || "Failed to start FFmpeg";
+      this.stats.errorMessage = err?.message ?? "Stream setup failed";
       this.cleanup();
       this.emit();
+      try { ws.close(); } catch {}
+    });
+  }
+
+  private async _doAttach(ws: WebSocket, rtmpUrl: string, streamKey: string): Promise<void> {
+    const rawTarget = `${rtmpUrl.replace(/\/$/, "")}/${streamKey}`;
+    logger.info({ rawTarget }, "Connecting RTMP publisher (Node.js TLS — bypasses librtmp)");
+
+    // ── Connect RTMP via Node.js (supports RTMPS/TLS, unlike librtmp) ────────
+    const publisher = new RtmpPublisher();
+    this.publisher = publisher;
+    try {
+      await publisher.connect(rawTarget);
+    } catch (err: any) {
+      this.stats.state = "error";
+      this.stats.errorMessage = `RTMP connect failed: ${err?.message ?? err}`;
+      logger.error({ err }, "RtmpPublisher failed");
+      this.cleanup();
+      this.emit();
+      try { ws.close(); } catch {}
+      return;
     }
+
+    // Kill FFmpeg then cleanup when publisher closes/errors
+    const killAll = (msg: string) => {
+      if (this.stats.state !== "live" && this.stats.state !== "connecting") return;
+      this.stats.state = "error";
+      this.stats.errorMessage = msg;
+      const proc = this.process;
+      if (proc) { try { proc.stdin?.end(); proc.kill("SIGTERM"); } catch {} setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 3000); }
+      this.cleanup();
+      this.emit();
+    };
+    publisher.on("error", (e: Error) => { logger.error({ err: e }, "RtmpPublisher error"); killAll(`RTMP error: ${e.message}`); });
+    publisher.on("close", () => { logger.warn("RtmpPublisher socket closed by server"); killAll("Facebook closed the RTMP connection — check stream key"); });
+
+    // ── Spawn FFmpeg writing FLV → stdout (not directly to RTMP) ─────────────
+    const args = [
+      "-use_wallclock_as_timestamps", "1",
+      "-framerate", "24",
+      "-f", "image2pipe", "-vcodec", "mjpeg", "-i", "pipe:0",
+      "-f", "lavfi", "-i", "aevalsrc=0:s=44100",
+      "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+      "-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "1500k",
+      "-pix_fmt", "yuv420p", "-g", "48", "-r", "24", "-vsync", "cfr",
+      "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+      "-map", "0:v:0", "-map", "1:a:0",
+      "-f", "flv", "pipe:1",   // FLV → our RTMP publisher
+    ];
+
+    this.process = spawn("ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"] });
+    this.startTime = Date.now();
+    this.sessionFpsSamples = [];
+    this.sessionBitrateSamples = [];
+
+    // Parse FLV from stdout and forward to RTMP publisher
+    this._pipeFlv(this.process.stdout as unknown as Readable, publisher);
+
+    this.process.stderr?.on("data", (d: Buffer) => {
+      const text = d.toString();
+      this.parseFFmpegStats(text);
+      logger.info({ ffmpeg: text.trim() }, "FFmpeg");
+    });
+
+    this.process.on("close", (code) => {
+      const uptime = this.startTime ? Math.floor((Date.now() - this.startTime) / 1000) : 0;
+      this.totalUptimeSeconds += uptime;
+      if (this.stats.state !== "stopping") {
+        this.stats.state = "error";
+        this.stats.errorMessage = `FFmpeg exited with code ${code}`;
+        logger.error({ code }, "FFmpeg exited unexpectedly");
+      } else {
+        this.stats.state = "idle";
+      }
+      this.cleanup();
+      this.emit();
+    });
+
+    this.process.on("error", (err) => {
+      this.stats.state = "error";
+      this.stats.errorMessage = err.message;
+      logger.error({ err }, "FFmpeg process error");
+      this.cleanup();
+      this.emit();
+    });
+
+    this.process.stdin?.on("error", () => {});
+
+    this._wireWs(ws);
+
+    // publisher.connect() already confirmed NetStream.Publish.Start → go live
+    setTimeout(() => {
+      if (this.stats.state === "connecting" && this.process) {
+        this.stats.state = "live";
+        this.totalSessions++;
+        this.lastStreamAt = new Date().toISOString();
+        this.emit();
+      }
+    }, 2000);
+
+    this.statsInterval = setInterval(() => {
+      if (this.startTime) this.stats.uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
+      this.stats.memoryMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
+      this.emit();
+    }, 1000);
+
+    this.cpuInterval = setInterval(() => { this.stats.cpuUsage = this.getCpuUsage(); }, 3000);
+  }
+
+  /** Wire WebSocket message/close/error handlers to running FFmpeg process. */
+  private _wireWs(ws: WebSocket): void {
+    ws.on("message", (data: Buffer) => {
+      if (this.process?.stdin?.writable) { try { this.process.stdin.write(data); } catch {} }
+    });
+    ws.on("close", () => {
+      logger.info("Stream WS disconnected — 8s grace period before stopping");
+      if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = setTimeout(() => { this.reconnectTimer = null; this.stop(); }, 8000);
+    });
+    ws.on("error", () => {
+      if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+      this.stop();
+    });
+  }
+
+  /** Parse FLV stream from FFmpeg stdout and forward each tag to the RTMP publisher. */
+  private _pipeFlv(stdout: Readable, publisher: RtmpPublisher): void {
+    let buf = Buffer.alloc(0);
+    let headerSkipped = false;
+    let tagCount = 0;
+
+    stdout.on("data", (chunk: Buffer) => {
+      buf = Buffer.concat([buf, chunk]);
+
+      if (!headerSkipped) {
+        if (buf.length < 9) return;
+        if (buf[0] !== 0x46 || buf[1] !== 0x4c || buf[2] !== 0x56) {
+          logger.error({ header: buf.slice(0, 4).toString("hex") }, "FFmpeg stdout is not FLV");
+          return;
+        }
+        const skipTotal = buf.readUInt32BE(5) + 4; // DataOffset + PreviousTagSize0
+        if (buf.length < skipTotal) return;
+        buf = buf.slice(skipTotal);
+        headerSkipped = true;
+        logger.info("FLV header OK — forwarding tags to Facebook");
+      }
+
+      // TagType(1)+DataSize(3)+Timestamp(3)+TimestampExt(1)+StreamID(3)+Data+PrevTagSize(4)
+      while (buf.length >= 11) {
+        const tagType = buf[0];
+        const dataSize = (buf[1] << 16) | (buf[2] << 8) | buf[3];
+        if (buf.length < 11 + dataSize + 4) break;
+        const ts = ((buf[7] << 24) | (buf[4] << 16) | (buf[5] << 8) | buf[6]) >>> 0;
+        publisher.writeFlvTag(tagType, ts, buf.slice(11, 11 + dataSize));
+        tagCount++;
+        if (tagCount <= 5) logger.info({ tagType, dataSize, ts }, "FLV tag → RTMP");
+        buf = buf.slice(11 + dataSize + 4);
+      }
+    });
+
+    stdout.on("error", (err) => logger.error({ err }, "FFmpeg stdout error"));
   }
 
   private parseFFmpegStats(line: string) {
@@ -312,8 +354,10 @@ class StreamManager {
 
   private cleanup() {
     if (this.connectTimeoutId) { clearTimeout(this.connectTimeoutId); this.connectTimeoutId = null; }
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     if (this.statsInterval) { clearInterval(this.statsInterval); this.statsInterval = null; }
     if (this.cpuInterval) { clearInterval(this.cpuInterval); this.cpuInterval = null; }
+    if (this.publisher) { try { this.publisher.close(); } catch {} this.publisher = null; }
     this.process = null;
     this.startTime = null;
   }
