@@ -50,7 +50,7 @@ function getWsUrl(path: string): string {
  * The browser uses this as a target — actual FPS is hardware-dependent.
  * Must match INPUT_FPS in streamManager.ts on the backend.
  */
-const TARGET_FPS = 15;
+const TARGET_FPS = 30;
 
 /** Prefer hardware-accelerated codecs first; browser picks the first supported. */
 const VIDEO_MIME_PREFERENCES_AUDIO = [

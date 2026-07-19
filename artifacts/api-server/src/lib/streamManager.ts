@@ -24,7 +24,7 @@ interface StreamStats {
  * OUTPUT_FPS — target frame-rate for the RTMP stream.
  * FFmpeg forces CFR output at this rate regardless of what MediaRecorder sends.
  */
-const OUTPUT_FPS = 15;
+const OUTPUT_FPS = 30;
 
 /** Maximum auto-reconnect attempts before giving up */
 const MAX_RECONNECT = 5;
