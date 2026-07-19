@@ -20,6 +20,12 @@ interface StreamStats {
   errorMessage: string | null;
 }
 
+/**
+ * INPUT_FPS must match the browser's TARGET_FPS constant in useCanvasStream.ts.
+ * FFmpeg uses this as the input framerate for timestamp assignment.
+ */
+const INPUT_FPS = 24;
+
 class StreamManager {
   private process: ChildProcess | null = null;
   private stats: StreamStats = {
@@ -92,19 +98,17 @@ class StreamManager {
     this.emit();
     logger.info({ rtmpUrl }, "Stream connecting — waiting for browser canvas stream");
 
-    // Watchdog: if no stream client connects within 10s, auto-fail.
-    // Without this, state stays "connecting" forever when the WebSocket
-    // never arrives (network failure, proxy drop, etc.).
+    // Watchdog: if no stream client connects within 15s, auto-fail.
     this.connectTimeoutId = setTimeout(() => {
       this.connectTimeoutId = null;
       if (this.stats.state !== "connecting") return;
-      logger.error("No stream client connected within 10s — aborting");
+      logger.error("No stream client connected within 15s — aborting");
       this.pendingConfig = null;
       this.stats.state = "error";
       this.stats.errorMessage = "Stream client did not connect in time. Check your network and try again.";
       this.cleanup();
       this.emit();
-    }, 10_000);
+    }, 15_000);
   }
 
   /**
@@ -138,12 +142,39 @@ class StreamManager {
     }
 
     const rawTarget = `${rtmpUrl.replace(/\/$/, "")}/${streamKey}`;
-    logger.info({ rawTarget, fps, videoBitrate }, "Stream client connected — connecting RTMP publisher");
+    logger.info({ rawTarget, fps, videoBitrate }, "Stream client connected — buffering frames while connecting RTMP");
 
-    // ── Connect RTMP publisher (Node.js, bypasses librtmp TLS limitation) ────
-    // FFmpeg on this system is compiled with librtmp which cannot do RTMPS/TLS.
-    // We handle the RTMP protocol in Node.js instead: FFmpeg writes FLV to
-    // stdout, and we parse/forward each FLV tag as an RTMP message over TLS.
+    // ── STEP 1: Register message handler IMMEDIATELY ───────────────────────────
+    // Critical: browser starts sending JPEG frames as soon as WebSocket opens.
+    // We must register the handler NOW (before the async RTMP connect below)
+    // or we lose all frames sent during the 2–5s Facebook handshake window.
+    //
+    // Frames arriving before FFmpeg stdin is ready go into the ring buffer.
+    // Once FFmpeg starts, the buffer is flushed and subsequent frames pipe directly.
+    const frameBuffer: Buffer[] = [];
+    const MAX_BUFFER_FRAMES = 150; // ~6 seconds at 24fps
+
+    const messageHandler = (rawData: unknown, isBinary: boolean) => {
+      if (!isBinary) return;
+      // ws v8 delivers binary data as Buffer, Buffer[], or ArrayBuffer
+      let buf: Buffer;
+      if (Array.isArray(rawData)) {
+        buf = Buffer.concat(rawData as Buffer[]);
+      } else if (Buffer.isBuffer(rawData)) {
+        buf = rawData;
+      } else {
+        buf = Buffer.from(rawData as ArrayBuffer);
+      }
+
+      if (this.process?.stdin?.writable) {
+        try { this.process.stdin.write(buf); } catch {}
+      } else if (frameBuffer.length < MAX_BUFFER_FRAMES) {
+        frameBuffer.push(buf);
+      }
+    };
+    (ws as any).on("message", messageHandler);
+
+    // ── STEP 2: Connect RTMP publisher ─────────────────────────────────────────
     const publisher = new RtmpPublisher();
     this.publisher = publisher;
     try {
@@ -177,19 +208,33 @@ class StreamManager {
       }
     });
 
-    // ── Spawn FFmpeg — writes FLV to stdout ──────────────────────────────────
+    // ── STEP 3: Spawn FFmpeg — reads JPEG from stdin, writes FLV to stdout ─────
+    //
+    // Key design decisions:
+    // - NO -use_wallclock_as_timestamps: that option sets analyzeduration=0 which
+    //   breaks probing when stdin is initially empty (race with browser connect).
+    // - -framerate INPUT_FPS: must match browser TARGET_FPS (24) for correct
+    //   timestamp assignment. FFmpeg assigns PTS = frame_index / INPUT_FPS.
+    // - -fps_mode cfr: FFmpeg 6.x replacement for deprecated -vsync cfr.
+    //   Duplicates frames to achieve the target -r fps on output.
+    // - anullsrc: cleaner silent stereo audio than aevalsrc.
+    // - FLV to stdout: forwarded tag-by-tag to the RTMP publisher (bypasses
+    //   librtmp, which doesn't support RTMPS/TLS required by Facebook).
     const bitrateK = `${videoBitrate}k`;
     const maxrateK = `${Math.round(videoBitrate * 1.2)}k`;
     const bufsizeK = `${videoBitrate}k`;
     const gop = fps * 2;
+
     const args = [
-      "-use_wallclock_as_timestamps", "1",
-      "-framerate", String(fps),
+      // Video input: JPEG frames from browser via stdin
       "-f", "image2pipe",
       "-vcodec", "mjpeg",
+      "-framerate", String(INPUT_FPS),
       "-i", "pipe:0",
+      // Audio input: silent stereo (replaced by real audio in a future update)
       "-f", "lavfi",
-      "-i", "aevalsrc=0:s=44100",
+      "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+      // Video encoding
       "-c:v", "libx264",
       "-preset", "ultrafast",
       "-tune", "zerolatency",
@@ -198,16 +243,20 @@ class StreamManager {
       "-bufsize", bufsizeK,
       "-pix_fmt", "yuv420p",
       "-g", String(gop),
+      // Frame rate conversion: INPUT_FPS → fps (e.g. 24→30 with duplication)
+      "-fps_mode", "cfr",
       "-r", String(fps),
-      "-vsync", "cfr",
+      // Audio encoding
       "-c:a", "aac",
       "-b:a", "128k",
       "-ar", "44100",
       "-ac", "2",
+      // Stream mapping
       "-map", "0:v:0",
       "-map", "1:a:0",
+      // FLV output to stdout for the RTMP publisher
       "-f", "flv",
-      "pipe:1",  // FLV → our RTMP publisher (not librtmp)
+      "pipe:1",
     ];
 
     try {
@@ -217,6 +266,16 @@ class StreamManager {
       this.startTime = Date.now();
       this.sessionFpsSamples = [];
       this.sessionBitrateSamples = [];
+
+      // ── STEP 4: Flush buffered frames to FFmpeg stdin ──────────────────────
+      logger.info({ bufferedFrames: frameBuffer.length }, "FFmpeg started — flushing buffered frames");
+      for (const frame of frameBuffer) {
+        if (this.process?.stdin?.writable) {
+          try { this.process.stdin.write(frame); } catch {}
+        }
+      }
+      frameBuffer.length = 0;
+      // From here on, the messageHandler above pipes directly to stdin.
 
       // Forward FLV tags from FFmpeg stdout to the RTMP publisher
       if (this.process.stdout) {
@@ -253,28 +312,22 @@ class StreamManager {
 
       this.process.stdin?.on("error", () => {});
 
-      ws.on("message", (data: Buffer) => {
-        if (this.process?.stdin?.writable) {
-          try { this.process.stdin.write(data); } catch {}
-        }
-      });
-
       ws.on("close", () => {
         logger.info("Stream WebSocket client disconnected — stopping");
         this.stop();
       });
       ws.on("error", () => { this.stop(); });
 
-      // publisher.connect() already confirmed RTMP is accepted by Facebook —
-      // transition to "live" as soon as FFmpeg starts sending FLV data
+      // Transition to "live" after giving FFmpeg time to start encoding.
+      // 3 seconds is enough for the probing + first keyframe.
       setTimeout(() => {
-        if (this.stats.state === "connecting" && this.process) {
+        if ((this.stats.state === "connecting") && this.process) {
           this.stats.state = "live";
           this.totalSessions++;
           this.lastStreamAt = new Date().toISOString();
           this.emit();
         }
-      }, 2000);
+      }, 3000);
 
       this.statsInterval = setInterval(() => {
         if (this.startTime) this.stats.uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
@@ -331,9 +384,16 @@ class StreamManager {
   private parseFFmpegStats(line: string) {
     const fpsM = line.match(/fps=\s*(\d+(?:\.\d+)?)/);
     if (fpsM) {
-      const fps = parseFloat(fpsM[1]);
-      this.stats.fps = fps;
-      if (this.stats.state === "live") this.sessionFpsSamples.push(fps);
+      const parsedFps = parseFloat(fpsM[1]);
+      this.stats.fps = parsedFps;
+      if (this.stats.state === "live") this.sessionFpsSamples.push(parsedFps);
+      // Transition to live as soon as we see real frames being encoded
+      if (parsedFps > 0 && this.stats.state === "connecting" && this.process) {
+        this.stats.state = "live";
+        this.totalSessions++;
+        this.lastStreamAt = new Date().toISOString();
+        this.emit();
+      }
     }
     const bpsM = line.match(/bitrate=\s*(\d+(?:\.\d+)?)kbits\/s/);
     if (bpsM) {
@@ -349,13 +409,11 @@ class StreamManager {
   }
 
   stop(): void {
-    // Always clear the watchdog when stopping
     if (this.connectTimeoutId) {
       clearTimeout(this.connectTimeoutId);
       this.connectTimeoutId = null;
     }
     if (!this.process) {
-      // No FFmpeg running — reset to idle regardless of current state
       this.pendingConfig = null;
       this.stats.state = "idle";
       this.stats.errorMessage = null;

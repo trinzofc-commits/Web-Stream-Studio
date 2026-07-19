@@ -1,2 +1,3 @@
 - [RTMP Input Source](rtmp-input-source.md) — DJI Fly → NMS port 1935 → FFmpeg HLS → /api/hls/{key}/ → hls.js in compositor
 - [RTMP SourceType enum](rtmp-enum-fix.md) — "rtmp" must be in openapi.yaml SourceType enum or source creation fails 400
+- [FFmpeg streaming race condition](ffmpeg-streaming-race-condition.md) — ws.on("message") must be registered BEFORE publisher.connect(); remove -use_wallclock_as_timestamps; use -fps_mode cfr
