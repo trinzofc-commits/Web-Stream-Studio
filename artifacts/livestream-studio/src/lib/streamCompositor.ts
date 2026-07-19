@@ -40,6 +40,17 @@ export class StreamCompositor {
     lastCapture: number;
   }>(); // key: source.id
 
+  // ── Audio mixing ────────────────────────────────────────────────────────────
+  // All audio sources are routed through a single AudioContext into one
+  // MediaStreamAudioDestinationNode.  The resulting MediaStream is exposed via
+  // getAudioStream() so useCanvasStream can capture and send it to the server.
+  private audioCtx: AudioContext | null = null;
+  private audioDestination: MediaStreamAudioDestinationNode | null = null;
+  // key: source.id — HTMLAudioElement for 'audio'/'audioPlaylist' sources
+  private audioElementCache = new Map<number, HTMLAudioElement>();
+  // Tracks which source IDs have already been wired into the AudioContext
+  private audioConnected = new Set<number>();
+
   constructor(width = 1280, height = 720) {
     this.canvas = document.createElement('canvas');
     this.canvas.width = width;
@@ -71,6 +82,27 @@ export class StreamCompositor {
       // Slideshow images
       if (src.type === 'slideshow' && Array.isArray(s.urls)) {
         for (const u of s.urls) if (u) this.preloadImage(u);
+      }
+
+      // Audio-only sources — play and wire into AudioContext mix
+      if ((src.type === 'audio' || src.type === 'audioPlaylist') && !this.audioConnected.has(src.id)) {
+        const url = s.url ?? (Array.isArray(s.urls) ? s.urls[0] : null);
+        if (url) {
+          const el = document.createElement('audio');
+          el.src = url;
+          el.loop = s.loop !== false;
+          el.preload = 'auto';
+          el.play().catch(() => {});
+          this.audioElementCache.set(src.id, el);
+
+          const { ctx, dest } = this.ensureAudioCtx();
+          const node = ctx.createMediaElementSource(el);
+          const gain = ctx.createGain();
+          gain.gain.value = typeof s.volume === 'number' ? s.volume : 1.0;
+          node.connect(gain);
+          gain.connect(dest);
+          this.audioConnected.add(src.id);
+        }
       }
 
       // Video file sources
@@ -162,7 +194,7 @@ export class StreamCompositor {
     this.intervalId = setInterval(() => this.drawFrame(), 1000 / this.fps);
   }
 
-  /** Stop rendering and release camera streams */
+  /** Stop rendering and release all resources */
   stop() {
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
@@ -184,6 +216,43 @@ export class StreamCompositor {
       entry.snapshot?.close();
     }
     this.browserCache.clear();
+    // Audio cleanup
+    for (const el of this.audioElementCache.values()) {
+      el.pause();
+      el.src = '';
+    }
+    this.audioElementCache.clear();
+    this.audioConnected.clear();
+    if (this.audioCtx) {
+      this.audioCtx.close().catch(() => {});
+      this.audioCtx = null;
+      this.audioDestination = null;
+    }
+  }
+
+  // ── Audio API ───────────────────────────────────────────────────────────────
+
+  /** Returns the mixed audio stream, or null if no audio sources are loaded. */
+  getAudioStream(): MediaStream | null {
+    return this.audioDestination?.stream ?? null;
+  }
+
+  /**
+   * Resume the AudioContext after a user gesture (required by browser autoplay
+   * policy). Call this inside a click/tap handler, e.g. when the user clicks
+   * "Start Stream".
+   */
+  resumeAudioContext(): void {
+    this.audioCtx?.resume().catch(() => {});
+  }
+
+  /** Lazy-create the shared AudioContext + destination node. */
+  private ensureAudioCtx(): { ctx: AudioContext; dest: MediaStreamAudioDestinationNode } {
+    if (!this.audioCtx || !this.audioDestination) {
+      this.audioCtx = new AudioContext({ sampleRate: 44100 });
+      this.audioDestination = this.audioCtx.createMediaStreamDestination();
+    }
+    return { ctx: this.audioCtx, dest: this.audioDestination };
   }
 
   // ─── Browser source snapshot capture ─────────────────────────────────────
@@ -517,6 +586,12 @@ export class StreamCompositor {
           }
           break;
         }
+
+        case 'audio':
+        case 'audioPlaylist':
+          // Audio-only sources — nothing to draw on the canvas.
+          // Their HTMLAudioElement is managed separately in audioElementCache.
+          break;
 
         default:
           this.placeholder(ctx, x, y, width, height, '#222222');

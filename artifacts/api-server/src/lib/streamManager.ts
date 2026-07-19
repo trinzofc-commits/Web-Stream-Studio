@@ -23,14 +23,12 @@ interface StreamStats {
 /**
  * INPUT_FPS must match the browser's TARGET_FPS constant in useCanvasStream.ts.
  * FFmpeg uses this as the input framerate for timestamp assignment.
- * Kept at 15 to match the browser capture rate and minimise WebSocket bandwidth.
  */
 const INPUT_FPS = 15;
 
 /** Maximum auto-reconnect attempts before giving up */
 const MAX_RECONNECT = 5;
 
-/** Delay between reconnect attempts: 3s, 6s, 12s, 24s, 48s (capped) */
 function reconnectDelayMs(attempt: number): number {
   return Math.min(3000 * Math.pow(2, attempt - 1), 48_000);
 }
@@ -50,23 +48,18 @@ class StreamManager {
   private listeners: Set<(stats: StreamStats) => void> = new Set();
   private publisher: RtmpPublisher | null = null;
 
-  // Pending config waiting for a stream client to connect
   private pendingConfig: { rtmpUrl: string; streamKey: string; fps: number; videoBitrate: number } | null = null;
-
-  // Saved config for auto-reconnect — set once we successfully start
   private activeConfig: { rtmpUrl: string; streamKey: string; fps: number; videoBitrate: number } | null = null;
 
-  // Session tracking
   private totalSessions = 0;
   private totalUptimeSeconds = 0;
   private lastStreamAt: string | null = null;
   private sessionFpsSamples: number[] = [];
   private sessionBitrateSamples: number[] = [];
 
-  // Auto-reconnect state
   private reconnectAttempts = 0;
   private reconnectTimerId: ReturnType<typeof setTimeout> | null = null;
-  private liveStartedAt: number | null = null; // wall clock when we went "live"
+  private liveStartedAt: number | null = null;
 
   getStats(): StreamStats { return { ...this.stats }; }
 
@@ -98,19 +91,12 @@ class StreamManager {
     } catch { return 0; }
   }
 
-  /**
-   * Called when user clicks "Start Stream".
-   * Stores config and marks state as "connecting".
-   * FFmpeg will be spawned when the browser WebSocket stream client connects.
-   */
   async start(rtmpUrl: string, streamKey: string, fps = 30, videoBitrate = 4000): Promise<void> {
     if (this.process) throw new Error("Stream already running");
     if (!rtmpUrl || !streamKey) throw new Error("RTMP URL and stream key are required");
 
-    // User explicitly started — reset reconnect counter
     this.reconnectAttempts = 0;
     this.activeConfig = { rtmpUrl, streamKey, fps, videoBitrate };
-
     this.pendingConfig = { rtmpUrl, streamKey, fps, videoBitrate };
     this.stats = {
       ...this.stats, state: "connecting", errorMessage: null,
@@ -119,7 +105,6 @@ class StreamManager {
     this.emit();
     logger.info({ rtmpUrl }, "Stream connecting — waiting for browser canvas stream");
 
-    // Watchdog: if no stream client connects within 15s, auto-fail.
     this.connectTimeoutId = setTimeout(() => {
       this.connectTimeoutId = null;
       if (this.stats.state !== "connecting") return;
@@ -132,9 +117,6 @@ class StreamManager {
     }, 15_000);
   }
 
-  /**
-   * Called by the WebSocket server when a browser connects with role=stream.
-   */
   attachStreamClient(ws: WebSocket): void {
     this._doAttach(ws).catch((err) => {
       logger.error({ err }, "Failed to attach stream client");
@@ -162,18 +144,27 @@ class StreamManager {
     }
 
     const rawTarget = `${rtmpUrl.replace(/\/$/, "")}/${streamKey}`;
-    logger.info({ rawTarget, fps, videoBitrate }, "Stream client connected — buffering frames while connecting RTMP");
 
     // ── STEP 1: Register message handler IMMEDIATELY ───────────────────────────
-    // Critical: browser starts sending JPEG frames as soon as WebSocket opens.
-    // We must register the handler NOW (before the async RTMP connect below)
-    // or we lose all frames sent during the 2–5s Facebook handshake window.
-    const frameBuffer: Buffer[] = [];
-    const MAX_BUFFER_FRAMES = 150; // ~6 seconds at 24fps
+    //
+    // Tagged binary protocol (from useCanvasStream.ts):
+    //   0x00 + JSON  → handshake  { hasAudio: boolean }
+    //   0x01 + JPEG  → video frame
+    //   0x02 + WebM  → audio chunk (Opus in WebM container from MediaRecorder)
+    //   0xFF…        → legacy untagged JPEG (backward compat)
+    //
+    // We register this handler BEFORE the async RTMP connect so that the
+    // handshake and early video/audio frames are captured during the 2–5 s
+    // Facebook TLS handshake window.
+    let hasAudio = false;
+    const videoBuffer: Buffer[] = [];
+    const audioBuffer: Buffer[] = [];
+    const MAX_VIDEO_BUFFER = 150; // ~10 s at 15 fps
+    const MAX_AUDIO_BUFFER = 200; // ~50 s at 250 ms chunks
 
     const messageHandler = (rawData: unknown, isBinary: boolean) => {
       if (!isBinary) return;
-      // ws v8 delivers binary data as Buffer, Buffer[], or ArrayBuffer
+
       let buf: Buffer;
       if (Array.isArray(rawData)) {
         buf = Buffer.concat(rawData as Buffer[]);
@@ -183,12 +174,42 @@ class StreamManager {
         buf = Buffer.from(rawData as ArrayBuffer);
       }
 
-      if (this.process?.stdin?.writable) {
-        try { this.process.stdin.write(buf); } catch {}
-      } else if (frameBuffer.length < MAX_BUFFER_FRAMES) {
-        frameBuffer.push(buf);
+      if (buf.length === 0) return;
+
+      const tag = buf[0];
+
+      if (tag === 0x00) {
+        // Handshake — read audio capability before FFmpeg spawns
+        try {
+          const json = JSON.parse(buf.slice(1).toString("utf8"));
+          hasAudio = json.hasAudio === true;
+          logger.info({ hasAudio }, "Stream handshake received");
+        } catch { /* ignore malformed */ }
+        return;
+      }
+
+      // Determine video vs audio, support legacy untagged JPEG (0xFF = SOI)
+      const isVideo = tag === 0x01 || tag === 0xFF;
+      const isAudio = tag === 0x02;
+      const payload = (tag === 0x01 || tag === 0x02) ? buf.slice(1) : buf;
+
+      if (isVideo) {
+        const stdin = (this.process?.stdin as any);
+        if (stdin?.writable) {
+          try { stdin.write(payload); } catch {}
+        } else if (videoBuffer.length < MAX_VIDEO_BUFFER) {
+          videoBuffer.push(payload);
+        }
+      } else if (isAudio) {
+        const audioPipe = this.process?.stdio[3] as any;
+        if (audioPipe?.writable) {
+          try { audioPipe.write(payload); } catch {}
+        } else if (audioBuffer.length < MAX_AUDIO_BUFFER) {
+          audioBuffer.push(payload);
+        }
       }
     };
+
     (ws as any).on("message", messageHandler);
 
     // ── STEP 2: Connect RTMP publisher ─────────────────────────────────────────
@@ -199,7 +220,7 @@ class StreamManager {
     } catch (err: any) {
       this.stats.state = "error";
       this.stats.errorMessage = `RTMP connect failed: ${err?.message ?? String(err)}`;
-      logger.error({ err }, "RtmpPublisher failed to connect to server");
+      logger.error({ err }, "RtmpPublisher failed to connect");
       this.cleanup();
       this.emit();
       try { ws.close(); } catch {}
@@ -212,7 +233,6 @@ class StreamManager {
         this._scheduleReconnect(`RTMP error: ${err.message}`);
       }
     });
-
     publisher.on("close", () => {
       logger.warn("RtmpPublisher socket closed");
       if (this.stats.state === "live" || this.stats.state === "connecting") {
@@ -221,56 +241,73 @@ class StreamManager {
     });
 
     // ── STEP 3: Spawn FFmpeg ────────────────────────────────────────────────────
+    //
+    // hasAudio is now set (handshake arrived during the ~3 s RTMP connect above).
+    // When true: read audio from pipe:3 (fd 3) — WebM/Opus from MediaRecorder.
+    // When false: use anullsrc (silent stream — no audio sources in the scene).
+    logger.info({ hasAudio, fps, videoBitrate }, "Spawning FFmpeg");
+
     const bitrateK = `${videoBitrate}k`;
     const maxrateK = `${Math.round(videoBitrate * 1.2)}k`;
     const bufsizeK = `${videoBitrate}k`;
     const gop = fps * 2;
 
-    const args = [
-      "-f", "image2pipe",
-      "-vcodec", "mjpeg",
+    const videoInputArgs = [
+      "-f", "image2pipe", "-vcodec", "mjpeg",
       "-framerate", String(INPUT_FPS),
       "-i", "pipe:0",
-      "-f", "lavfi",
-      "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-      "-c:v", "libx264",
-      "-preset", "ultrafast",
-      "-tune", "zerolatency",
-      "-b:v", bitrateK,
-      "-maxrate", maxrateK,
-      "-bufsize", bufsizeK,
-      "-pix_fmt", "yuv420p",
-      "-g", String(gop),
-      "-fps_mode", "cfr",
-      "-r", String(fps),
-      "-c:a", "aac",
-      "-b:a", "128k",
-      "-ar", "44100",
-      "-ac", "2",
-      "-map", "0:v:0",
-      "-map", "1:a:0",
-      "-f", "flv",
-      "pipe:1",
     ];
 
+    const audioInputArgs = hasAudio
+      ? ["-f", "webm", "-i", "pipe:3"]
+      : ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"];
+
+    const encodeArgs = [
+      "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+      "-b:v", bitrateK, "-maxrate", maxrateK, "-bufsize", bufsizeK,
+      "-pix_fmt", "yuv420p", "-g", String(gop),
+      "-fps_mode", "cfr", "-r", String(fps),
+      "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+      "-map", "0:v:0", "-map", "1:a:0",
+      "-f", "flv", "pipe:1",
+    ];
+
+    const args = [...videoInputArgs, ...audioInputArgs, ...encodeArgs];
+
+    // Use 4 stdio slots when audio pipe is needed (fd 3 = audio input)
+    const stdioConfig = hasAudio
+      ? (["pipe", "pipe", "pipe", "pipe"] as const)
+      : (["pipe", "pipe", "pipe"] as const);
+
     try {
-      this.process = spawn("ffmpeg", args, {
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      this.process = spawn("ffmpeg", args, { stdio: stdioConfig as any });
       this.startTime = Date.now();
       this.sessionFpsSamples = [];
       this.sessionBitrateSamples = [];
 
-      // ── STEP 4: Flush buffered frames to FFmpeg stdin ──────────────────────
-      logger.info({ bufferedFrames: frameBuffer.length }, "FFmpeg started — flushing buffered frames");
-      for (const frame of frameBuffer) {
-        if (this.process?.stdin?.writable) {
-          try { this.process.stdin.write(frame); } catch {}
+      // ── STEP 4: Flush buffered frames/chunks to FFmpeg ─────────────────────
+      logger.info(
+        { videoFrames: videoBuffer.length, audioChunks: audioBuffer.length },
+        "FFmpeg started — flushing buffers",
+      );
+      for (const frame of videoBuffer) {
+        if ((this.process?.stdin as any)?.writable) {
+          try { (this.process!.stdin as any).write(frame); } catch {}
         }
       }
-      frameBuffer.length = 0;
+      videoBuffer.length = 0;
 
-      // Forward FLV tags from FFmpeg stdout to the RTMP publisher
+      if (hasAudio) {
+        const audioPipe = this.process.stdio[3] as any;
+        for (const chunk of audioBuffer) {
+          if (audioPipe?.writable) {
+            try { audioPipe.write(chunk); } catch {}
+          }
+        }
+      }
+      audioBuffer.length = 0;
+
+      // Forward FLV tags from FFmpeg stdout to RTMP publisher
       if (this.process.stdout) {
         this.pipeFlvToPublisher(this.process.stdout as unknown as Readable, publisher);
       }
@@ -289,7 +326,6 @@ class StreamManager {
           this.cleanup();
           this.emit();
         } else if (this.stats.state !== "reconnecting") {
-          // Unexpected FFmpeg exit — try to reconnect
           logger.error({ code }, "FFmpeg exited unexpectedly");
           this._scheduleReconnect(`FFmpeg exited (code ${code})`);
         }
@@ -304,11 +340,11 @@ class StreamManager {
       });
 
       this.process.stdin?.on("error", () => {});
+      if (hasAudio) (this.process.stdio[3] as any)?.on("error", () => {});
 
       ws.on("close", () => {
         logger.info("Stream WebSocket client disconnected");
         if (this.stats.state === "live" || this.stats.state === "connecting") {
-          // Browser ws dropped (proxy timeout, network blip) — auto-reconnect
           this._scheduleReconnect("Browser connection lost");
         } else if (this.stats.state !== "reconnecting") {
           this.stop();
@@ -320,8 +356,6 @@ class StreamManager {
         }
       });
 
-      // Transition to "live" after 3s as fallback; parseFFmpegStats transitions
-      // immediately when it sees real fps > 0.
       setTimeout(() => {
         if (this.stats.state === "connecting" && this.process) {
           this.stats.state = "live";
@@ -350,17 +384,12 @@ class StreamManager {
     }
   }
 
-  /**
-   * Schedule an automatic reconnect attempt.
-   * Uses exponential backoff: 3s, 6s, 12s, 24s, 48s.
-   * Gives up after MAX_RECONNECT attempts and sets state to "error".
-   */
   private _scheduleReconnect(reason: string): void {
     if (this.stats.state === "reconnecting" || this.stats.state === "stopping") return;
 
     this.reconnectAttempts++;
     if (this.reconnectAttempts > MAX_RECONNECT) {
-      logger.error({ reason, attempts: this.reconnectAttempts }, "Max reconnect attempts reached — giving up");
+      logger.error({ reason, attempts: this.reconnectAttempts }, "Max reconnect attempts reached");
       this.stats.state = "error";
       this.stats.errorMessage = `${reason}. Max reconnect attempts reached. Please restart manually.`;
       this._hardStop();
@@ -373,12 +402,12 @@ class StreamManager {
 
     this.stats.state = "reconnecting";
     this.stats.errorMessage = `${reason}. Reconnecting (${this.reconnectAttempts}/${MAX_RECONNECT}) in ${delay / 1000}s…`;
-    this._hardStop(); // kill FFmpeg + publisher without touching state
+    this._hardStop();
     this.emit();
 
     this.reconnectTimerId = setTimeout(async () => {
       this.reconnectTimerId = null;
-      if (this.stats.state !== "reconnecting") return; // user manually stopped
+      if (this.stats.state !== "reconnecting") return;
       if (!this.activeConfig) {
         this.stats.state = "error";
         this.stats.errorMessage = "No stream config saved — cannot reconnect";
@@ -386,7 +415,6 @@ class StreamManager {
         return;
       }
       logger.info({ attempt: this.reconnectAttempts }, "Reconnect: setting state to connecting");
-      // Reset to "connecting" — the frontend sees this and opens a new WebSocket
       this.pendingConfig = { ...this.activeConfig };
       this.stats.state = "connecting";
       this.stats.errorMessage = null;
@@ -394,7 +422,6 @@ class StreamManager {
       this.stats.bitrate = null;
       this.emit();
 
-      // Watchdog for the new connection attempt
       this.connectTimeoutId = setTimeout(() => {
         this.connectTimeoutId = null;
         if (this.stats.state !== "connecting") return;
@@ -404,7 +431,6 @@ class StreamManager {
     }, delay);
   }
 
-  /** Kill process and publisher without changing state (used by _scheduleReconnect) */
   private _hardStop(): void {
     if (this.connectTimeoutId) { clearTimeout(this.connectTimeoutId); this.connectTimeoutId = null; }
     if (this.reconnectTimerId) { clearTimeout(this.reconnectTimerId); this.reconnectTimerId = null; }
@@ -414,6 +440,9 @@ class StreamManager {
     if (this.process) {
       try {
         this.process.stdin?.end();
+        // Close audio pipe if it exists
+        const audioPipe = this.process.stdio[3] as any;
+        if (audioPipe) try { audioPipe.end(); } catch {}
         this.process.kill("SIGTERM");
         const p = this.process;
         setTimeout(() => { try { p.kill("SIGKILL"); } catch {} }, 3000);
@@ -423,7 +452,6 @@ class StreamManager {
     this.startTime = null;
   }
 
-  /** Parse FLV stream from FFmpeg stdout and forward each tag to the RTMP publisher. */
   private pipeFlvToPublisher(stdout: Readable, publisher: RtmpPublisher): void {
     let buf = Buffer.alloc(0);
     let headerSkipped = false;
@@ -431,7 +459,6 @@ class StreamManager {
     stdout.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
 
-      // Skip FLV file header (DataOffset bytes) + PreviousTagSize0 (4 bytes)
       if (!headerSkipped) {
         if (buf.length < 9) return;
         const dataOffset = buf.readUInt32BE(5);
@@ -441,7 +468,6 @@ class StreamManager {
         headerSkipped = true;
       }
 
-      // Each FLV tag: TagType(1)+DataSize(3)+Timestamp(3)+TimestampExt(1)+StreamID(3)+Data+PrevTagSize(4)
       while (buf.length >= 15) {
         const tagType = buf[0];
         const dataSize = (buf[1] << 16) | (buf[2] << 8) | buf[3];
@@ -462,7 +488,6 @@ class StreamManager {
       const parsedFps = parseFloat(fpsM[1]);
       this.stats.fps = parsedFps;
       if (this.stats.state === "live") this.sessionFpsSamples.push(parsedFps);
-      // Transition to live as soon as FFmpeg reports real encoded frames
       if (parsedFps > 0 && this.stats.state === "connecting" && this.process) {
         this.stats.state = "live";
         this.totalSessions++;
@@ -470,7 +495,6 @@ class StreamManager {
         this.liveStartedAt = Date.now();
         this.emit();
       }
-      // Reset reconnect counter once we've been stable for > 10 seconds
       if (parsedFps > 0 && this.stats.state === "live" && this.reconnectAttempts > 0) {
         const liveMs = this.liveStartedAt ? Date.now() - this.liveStartedAt : 0;
         if (liveMs > 10_000) {
@@ -493,7 +517,6 @@ class StreamManager {
   }
 
   stop(): void {
-    // User-initiated stop — cancel any pending reconnects, reset counter
     if (this.reconnectTimerId) { clearTimeout(this.reconnectTimerId); this.reconnectTimerId = null; }
     if (this.connectTimeoutId) { clearTimeout(this.connectTimeoutId); this.connectTimeoutId = null; }
     this.reconnectAttempts = 0;
@@ -511,6 +534,8 @@ class StreamManager {
     this.stats.state = "stopping";
     this.emit();
     this.process.stdin?.end();
+    const audioPipe = this.process.stdio[3] as any;
+    if (audioPipe) try { audioPipe.end(); } catch {}
     this.process.kill("SIGTERM");
     const proc = this.process;
     setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 3000);

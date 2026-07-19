@@ -1,12 +1,23 @@
 /**
  * useCanvasStream
- * Watches stream state and, when streaming starts, captures the scene canvas
- * via StreamCompositor → JPEG frames → WebSocket binary → backend FFmpeg stdin.
+ * Captures the scene canvas (video) + audio mix via StreamCompositor and
+ * streams both to the backend over a single binary WebSocket.
  *
- * Server-side encoding: instead of MediaRecorder (VP8 on client CPU), we send
- * raw JPEG frames over WebSocket and let FFmpeg on the server encode H.264.
- * This cuts mobile CPU usage significantly — the phone only composites canvas,
- * it never runs a software video encoder.
+ * ── Tagged binary protocol ─────────────────────────────────────────────────
+ *  byte 0 = message type:
+ *    0x00  handshake  — JSON payload: { hasAudio: boolean }
+ *    0x01  video      — JPEG frame bytes
+ *    0x02  audio      — WebM/Opus chunk bytes (from MediaRecorder)
+ *  Legacy: if first byte is 0xFF (JPEG SOI) the message is an untagged video
+ *  frame sent by an older client — the backend handles this for compat.
+ *
+ * ── Audio path ─────────────────────────────────────────────────────────────
+ *  AudioContext → [audio/audioPlaylist elements] → MediaStreamDestination
+ *  → MediaRecorder (opus, 250 ms chunks) → tagged 0x02 → WebSocket → FFmpeg
+ *
+ * ── Video path ─────────────────────────────────────────────────────────────
+ *  compositor canvas → scale to 720p → toBlob JPEG → tagged 0x01 → WebSocket
+ *  → FFmpeg (15 fps input)
  */
 import { useEffect, useRef, useCallback } from 'react';
 import { StreamCompositor } from '@/lib/streamCompositor';
@@ -31,35 +42,19 @@ function getWsUrl(path: string): string {
   return `${proto}//${window.location.host}${path}`;
 }
 
-/**
- * Target frame rate for JPEG capture sent to the server.
- * Must match INPUT_FPS in streamManager.ts on the backend.
- *
- * 15 fps is plenty for livestreaming and cuts WebSocket bandwidth ~40% vs 24 fps.
- * The compositor still renders the local preview at 30 fps — only the data sent
- * to the server is reduced.
- */
+/** Target frame rate for JPEG capture sent to the server.
+ *  Must match INPUT_FPS in streamManager.ts on the backend. */
 const TARGET_FPS = 15;
 
-/**
- * JPEG quality 0–1 for frames sent over WebSocket to FFmpeg.
- * 0.6 keeps ~90% of perceived quality vs 0.75 but is ~35% smaller on the wire.
- */
+/** JPEG quality sent over WebSocket to FFmpeg. */
 const JPEG_QUALITY = 0.6;
 
-/**
- * Maximum long-side pixels for the encode canvas sent to the server.
- * 1280 px produces 1280×720 (landscape) for standard 16:9 content — exactly
- * 720p. toBlob() at this size is fast on modern devices and gives Facebook Live
- * enough detail while keeping WebSocket bandwidth stable.
- *
- * Estimated WebSocket throughput at these settings:
- *   15 fps × ~45 KB/frame ≈ 675 KB/s ≈ 5 Mbps  (well within stable range)
- */
+/** Max long-side pixels for the encoded frame (720p = 1280 long side for 16:9). */
 const MAX_ENCODE_LONG_SIDE = 1280;
 
-/** Calculate encode canvas size that preserves aspect ratio and ensures even
- *  pixel counts (required for H.264 yuv420p). */
+/** Audio chunk interval in ms for MediaRecorder. */
+const AUDIO_TIMESLICE_MS = 250;
+
 function calcEncodeSize(w: number, h: number): [number, number] {
   let ew: number, eh: number;
   if (w >= h) {
@@ -69,10 +64,17 @@ function calcEncodeSize(w: number, h: number): [number, number] {
     eh = Math.min(h, MAX_ENCODE_LONG_SIDE);
     ew = Math.round(eh * w / h);
   }
-  // H.264 yuv420p requires even dimensions
   ew = ew % 2 === 0 ? ew : ew - 1;
   eh = eh % 2 === 0 ? eh : eh - 1;
   return [ew, eh];
+}
+
+/** Prefix a byte tag in front of an ArrayBuffer without copying the payload. */
+function taggedMessage(tag: number, payload: ArrayBuffer): ArrayBuffer {
+  const out = new Uint8Array(1 + payload.byteLength);
+  out[0] = tag;
+  out.set(new Uint8Array(payload), 1);
+  return out.buffer;
 }
 
 export function useCanvasStream(
@@ -84,6 +86,7 @@ export function useCanvasStream(
   const compositorRef = useRef<StreamCompositor | null>(null);
   const captureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const audioRecorderRef = useRef<MediaRecorder | null>(null);
   const isStreamingRef = useRef(false);
 
   // Keep compositor in sync with sources at all times
@@ -100,6 +103,11 @@ export function useCanvasStream(
       captureIntervalRef.current = null;
     }
 
+    if (audioRecorderRef.current && audioRecorderRef.current.state !== 'inactive') {
+      try { audioRecorderRef.current.stop(); } catch {}
+    }
+    audioRecorderRef.current = null;
+
     try { wsRef.current?.close(); } catch {}
     wsRef.current = null;
 
@@ -112,36 +120,67 @@ export function useCanvasStream(
     isStreamingRef.current = true;
 
     try {
-      // 1. Build compositor and start rendering
+      // 1. Build compositor and start render loop
       const compositor = new StreamCompositor(w, h);
       compositor.updateSources(currentSources);
       compositor.start();
+      // Resume AudioContext — must be called inside a user-gesture call stack
+      compositor.resumeAudioContext();
       compositorRef.current = compositor;
 
-      // 2. Open binary WebSocket to backend
+      // 2. Probe audio availability before opening WebSocket
+      //    (compositor needs a moment to wire audio elements)
+      await new Promise((r) => setTimeout(r, 50));
+      const audioStream = compositor.getAudioStream();
+      const hasAudio = audioStream != null;
+
+      // 3. Open binary WebSocket to backend
       const ws = new WebSocket(getWsUrl('/ws?role=stream'));
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
       await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => {
-          console.log('[stream] WebSocket connected (server-side encoding mode)');
-          resolve();
-        };
-        ws.onerror = (e) => {
-          console.error('[stream] WebSocket error', e);
-          reject(new Error('WebSocket failed to connect'));
-        };
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error('WebSocket failed to connect'));
         setTimeout(() => reject(new Error('WebSocket timeout')), 8000);
       });
+
+      // 4. Send handshake immediately so the server knows audio is coming
+      //    before it spawns FFmpeg (RTMP connect takes 2–5 s — plenty of time)
+      const handshakeJson = JSON.stringify({ hasAudio });
+      const handshakeBytes = new TextEncoder().encode(handshakeJson);
+      const handshake = new Uint8Array(1 + handshakeBytes.length);
+      handshake[0] = 0x00;
+      handshake.set(handshakeBytes, 1);
+      ws.send(handshake.buffer);
 
       ws.onclose = () => { if (isStreamingRef.current) stopStream(); };
       ws.onerror = () => { if (isStreamingRef.current) stopStream(); };
 
-      // 3. Capture JPEG frames from canvas and pipe to server.
-      // We scale the compositor canvas down to at most 1280px on the long side
-      // while preserving aspect ratio, so portrait/landscape are both correct.
-      // toBlob() at full 1920×1080 takes 500ms+ on mobile — this makes it ~4× faster.
+      // 5. Start audio MediaRecorder — sends 0x02-tagged WebM/Opus chunks
+      if (hasAudio && audioStream) {
+        const mimeType =
+          MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' :
+          MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+
+        if (mimeType) {
+          const recorder = new MediaRecorder(audioStream, {
+            mimeType,
+            audioBitsPerSecond: 128_000,
+          });
+          recorder.ondataavailable = async (e) => {
+            if (!e.data.size || ws.readyState !== WebSocket.OPEN) return;
+            const buf = await e.data.arrayBuffer();
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(taggedMessage(0x02, buf));
+            }
+          };
+          recorder.start(AUDIO_TIMESLICE_MS);
+          audioRecorderRef.current = recorder;
+        }
+      }
+
+      // 6. Capture JPEG frames from canvas, tagged with 0x01
       const [ENCODE_WIDTH, ENCODE_HEIGHT] = calcEncodeSize(w, h);
       const srcCanvas = compositor.getCanvas();
       const encCanvas = document.createElement('canvas');
@@ -155,14 +194,15 @@ export function useCanvasStream(
         if (ws.readyState !== WebSocket.OPEN) return;
 
         capturing = true;
-        // Scale down: draw compositor canvas → smaller encode canvas
         encCtx.drawImage(srcCanvas, 0, 0, ENCODE_WIDTH, ENCODE_HEIGHT);
         encCanvas.toBlob(
           (blob) => {
             capturing = false;
             if (!blob || ws.readyState !== WebSocket.OPEN) return;
             blob.arrayBuffer().then((buf) => {
-              if (ws.readyState === WebSocket.OPEN) ws.send(buf);
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(taggedMessage(0x01, buf));
+              }
             }).catch(() => {});
           },
           'image/jpeg',
@@ -175,7 +215,7 @@ export function useCanvasStream(
     }
   }, [stopStream]);
 
-  // React to stream state changes
+  // Track latest values for the effect below without triggering re-runs
   const sourcesRef = useRef(sources);
   sourcesRef.current = sources;
   const wRef = useRef(canvasWidth);
