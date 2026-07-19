@@ -49,14 +49,14 @@ const JPEG_QUALITY = 0.6;
 
 /**
  * Maximum long-side pixels for the encode canvas sent to the server.
- * 854 px produces 854×480 (landscape) or 480×854 (portrait) — enough for
- * Facebook Live at 4 Mbps. toBlob() at this size is ~3× faster than 1280 px,
- * greatly reducing browser CPU and WebSocket bandwidth.
+ * 1280 px produces 1280×720 (landscape) for standard 16:9 content — exactly
+ * 720p. toBlob() at this size is fast on modern devices and gives Facebook Live
+ * enough detail while keeping WebSocket bandwidth stable.
  *
  * Estimated WebSocket throughput at these settings:
- *   15 fps × ~25 KB/frame ≈ 375 KB/s ≈ 3 Mbps  (vs ~15 Mbps at old defaults)
+ *   15 fps × ~45 KB/frame ≈ 675 KB/s ≈ 5 Mbps  (well within stable range)
  */
-const MAX_ENCODE_LONG_SIDE = 854;
+const MAX_ENCODE_LONG_SIDE = 1280;
 
 /** Calculate encode canvas size that preserves aspect ratio and ensures even
  *  pixel counts (required for H.264 yuv420p). */

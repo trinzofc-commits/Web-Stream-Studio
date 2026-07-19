@@ -2,14 +2,24 @@ import { Router, type IRouter } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import sharp from "sharp";
 import { eq } from "drizzle-orm";
 import { db, mediaAssetsTable } from "@workspace/db";
 import { serialize } from "../lib/serialize";
+import { logger } from "../lib/logger";
 import {
   ListUploadsQueryParams,
   DeleteUploadParams,
   ListUploadsResponse,
 } from "@workspace/api-zod";
+
+/**
+ * Max long-side pixels for uploaded images.
+ * Images larger than this are downscaled server-side before storage.
+ * 1280 px = 720p landscape (1280×720) which matches the stream encode resolution.
+ * Reduces browser memory, canvas compositing load, and WebSocket bandwidth.
+ */
+const IMAGE_MAX_LONG_SIDE = 1280;
 
 const router: IRouter = Router();
 
@@ -62,7 +72,45 @@ router.post("/uploads", upload.single("file"), async (req, res): Promise<void> =
     res.status(400).json({ error: "No file provided" });
     return;
   }
+
   const assetType = getAssetType(req.file.mimetype);
+  let finalPath = req.file.path;
+  let finalSize = req.file.size;
+
+  // ── Auto-downscale images to max 1280px on long side ──────────────────────
+  // Compositor draws images onto a 720p canvas anyway — storing a 4K PNG only
+  // wastes browser RAM and slows canvas compositing. We resize in-place so the
+  // URL stays the same and no extra storage is needed.
+  if (req.file.mimetype.startsWith("image/") && req.file.mimetype !== "image/gif") {
+    try {
+      const meta = await sharp(finalPath).metadata();
+      const longSide = Math.max(meta.width ?? 0, meta.height ?? 0);
+
+      if (longSide > IMAGE_MAX_LONG_SIDE) {
+        const isLandscape = (meta.width ?? 0) >= (meta.height ?? 0);
+        const resizeOpts = isLandscape
+          ? { width: IMAGE_MAX_LONG_SIDE }
+          : { height: IMAGE_MAX_LONG_SIDE };
+
+        const tmpPath = `${finalPath}.resizing`;
+        await sharp(finalPath)
+          .resize(resizeOpts)
+          .jpeg({ quality: 85, progressive: true })
+          .toFile(tmpPath);
+
+        fs.renameSync(tmpPath, finalPath);
+        finalSize = fs.statSync(finalPath).size;
+        logger.info(
+          { original: req.file.size, resized: finalSize, longSide },
+          "Image downscaled on upload",
+        );
+      }
+    } catch (err) {
+      // Non-fatal: keep original file if resize fails
+      logger.warn({ err, file: req.file.filename }, "Image resize failed — keeping original");
+    }
+  }
+
   const url = `/api/uploads/files/${req.file.filename}`;
   const [asset] = await db
     .insert(mediaAssetsTable)
@@ -71,7 +119,7 @@ router.post("/uploads", upload.single("file"), async (req, res): Promise<void> =
       url,
       type: assetType,
       mimeType: req.file.mimetype,
-      sizeBytes: req.file.size,
+      sizeBytes: finalSize,
     })
     .returning();
   res.status(201).json(serialize(asset));
