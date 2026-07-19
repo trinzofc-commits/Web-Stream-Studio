@@ -23,8 +23,9 @@ interface StreamStats {
 /**
  * INPUT_FPS must match the browser's TARGET_FPS constant in useCanvasStream.ts.
  * FFmpeg uses this as the input framerate for timestamp assignment.
+ * Kept at 15 to match the browser capture rate and minimise WebSocket bandwidth.
  */
-const INPUT_FPS = 24;
+const INPUT_FPS = 15;
 
 /** Maximum auto-reconnect attempts before giving up */
 const MAX_RECONNECT = 5;

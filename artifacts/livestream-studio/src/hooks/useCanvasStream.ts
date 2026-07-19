@@ -31,18 +31,32 @@ function getWsUrl(path: string): string {
   return `${proto}//${window.location.host}${path}`;
 }
 
-/** Target frame rate for JPEG capture. Lower = less CPU on client. */
-const TARGET_FPS = 24;
-/** JPEG quality 0–1. Lower = less CPU + bandwidth, small visual difference. */
-const JPEG_QUALITY = 0.75;
+/**
+ * Target frame rate for JPEG capture sent to the server.
+ * Must match INPUT_FPS in streamManager.ts on the backend.
+ *
+ * 15 fps is plenty for livestreaming and cuts WebSocket bandwidth ~40% vs 24 fps.
+ * The compositor still renders the local preview at 30 fps — only the data sent
+ * to the server is reduced.
+ */
+const TARGET_FPS = 15;
+
+/**
+ * JPEG quality 0–1 for frames sent over WebSocket to FFmpeg.
+ * 0.6 keeps ~90% of perceived quality vs 0.75 but is ~35% smaller on the wire.
+ */
+const JPEG_QUALITY = 0.6;
+
 /**
  * Maximum long-side pixels for the encode canvas sent to the server.
- * The actual encode size is derived from the compositor canvas dimensions
- * while preserving aspect ratio, so portrait and landscape are both correct.
- * Canvas may be 1920×1080 but toBlob() at that size takes 500ms+ on mobile —
- * scaling to max 1280px on the long side makes toBlob() ~4× faster.
+ * 854 px produces 854×480 (landscape) or 480×854 (portrait) — enough for
+ * Facebook Live at 4 Mbps. toBlob() at this size is ~3× faster than 1280 px,
+ * greatly reducing browser CPU and WebSocket bandwidth.
+ *
+ * Estimated WebSocket throughput at these settings:
+ *   15 fps × ~25 KB/frame ≈ 375 KB/s ≈ 3 Mbps  (vs ~15 Mbps at old defaults)
  */
-const MAX_ENCODE_LONG_SIDE = 1280;
+const MAX_ENCODE_LONG_SIDE = 854;
 
 /** Calculate encode canvas size that preserves aspect ratio and ensures even
  *  pixel counts (required for H.264 yuv420p). */
