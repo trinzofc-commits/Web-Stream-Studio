@@ -43,6 +43,12 @@ RUN wget https://github.com/bluenviron/mediamtx/releases/download/v1.12.2/mediam
     tar -xzf /tmp/mediamtx.tar.gz -C /usr/local/bin/ && \
     rm /tmp/mediamtx.tar.gz
 
+# Install bore (TCP tunnel for RTMP ingest)
+RUN wget https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-unknown-linux-musl.tar.gz -O /tmp/bore.tar.gz && \
+    tar -xzf /tmp/bore.tar.gz -C /usr/local/bin/ && \
+    chmod +x /usr/local/bin/bore && \
+    rm /tmp/bore.tar.gz
+
 # Bundled API server (esbuild output)
 COPY --from=builder /app/artifacts/api-server/dist ./dist
 
