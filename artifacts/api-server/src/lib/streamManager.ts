@@ -4,6 +4,7 @@ import type { Readable } from "stream";
 import type { WebSocket } from "ws";
 import { logger } from "./logger.js";
 import { RtmpPublisher } from "./rtmpPublisher.js";
+import { getActiveStreams, hlsPlaylistPath, isStreamActive } from "./rtmpServer.js";
 
 export type StreamState = "idle" | "connecting" | "live" | "stopping" | "error" | "reconnecting";
 
@@ -71,6 +72,7 @@ class StreamManager {
   private reconnectAttempts = 0;
   private reconnectTimerId: ReturnType<typeof setTimeout> | null = null;
   private liveStartedAt: number | null = null;
+  private hlsFallbackActive = false;
 
   getStats(): StreamStats { return { ...this.stats }; }
 
@@ -393,14 +395,16 @@ class StreamManager {
       ws.on("close", () => {
         logger.info("Stream WebSocket client disconnected");
         if (this.stats.state === "live" || this.stats.state === "connecting") {
-          this._scheduleReconnect("Browser connection lost");
+          // Try to keep the stream alive by switching to server-side HLS relay.
+          // Only falls back to stop() if no RTMP source is active in mediamtx.
+          this._switchToHlsFallback();
         } else if (this.stats.state !== "reconnecting") {
           this.stop();
         }
       });
       ws.on("error", () => {
         if (this.stats.state === "live" || this.stats.state === "connecting") {
-          this._scheduleReconnect("Browser connection error");
+          this._switchToHlsFallback();
         }
       });
 
@@ -562,12 +566,135 @@ class StreamManager {
     if (dropM)  this.stats.droppedFrames = parseInt(dropM[1]);
   }
 
+  /**
+   * When the browser tab closes while streaming, switch FFmpeg to read from
+   * the mediamtx HLS relay (server-side RTMP source, e.g. DJI / OBS) so the
+   * stream continues without the browser. Falls back to stop() if no RTMP
+   * source is active.
+   */
+  private async _switchToHlsFallback(): Promise<void> {
+    if (!this.activeConfig) { this.stop(); return; }
+
+    let activeKey: string | null = null;
+    try {
+      const streams = await getActiveStreams();
+      activeKey = streams[0] ?? null;
+    } catch { /* ignore */ }
+
+    // Also check filesystem in case mediamtx REST API is slow
+    if (!activeKey) {
+      for (const candidate of ["live"]) {
+        if (isStreamActive(candidate)) { activeKey = candidate; break; }
+      }
+    }
+
+    if (!activeKey) {
+      logger.warn("Browser disconnected and no active RTMP source — stopping stream");
+      this.stop();
+      return;
+    }
+
+    const hlsPath = hlsPlaylistPath(activeKey);
+    logger.info({ hlsPath }, "Browser disconnected — switching to HLS relay mode");
+
+    // Kill current browser-piped FFmpeg
+    this._hardStop();
+
+    const { rtmpUrl, streamKey, videoBitrate = 4000 } = this.activeConfig;
+    const rawTarget = `${rtmpUrl.replace(/\/$/, "")}/${streamKey}`;
+    const bitrateK = `${videoBitrate}k`;
+    const maxrateK = `${Math.round(videoBitrate * 1.2)}k`;
+    const gop = OUTPUT_FPS * 2;
+
+    const args = [
+      "-fflags", "+nobuffer+genpts",
+      "-flags", "low_delay",
+      "-i", hlsPath,
+      "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "-map", "0:v:0", "-map", "1:a:0",
+      "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+      "-b:v", bitrateK, "-maxrate", maxrateK, "-bufsize", bitrateK,
+      "-pix_fmt", "yuv420p", "-g", String(gop),
+      "-fps_mode", "cfr", "-r", String(OUTPUT_FPS),
+      "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+      "-f", "flv", "pipe:1",
+    ];
+
+    try {
+      const publisher = new RtmpPublisher();
+      this.publisher = publisher;
+      await publisher.connect(rawTarget);
+
+      publisher.on("error", (err: Error) => {
+        if (this.stats.state === "live") this._scheduleReconnect(`RTMP error: ${err.message}`);
+      });
+      publisher.on("close", () => {
+        if (this.stats.state === "live") this._scheduleReconnect("RTMP connection lost");
+      });
+
+      this.process = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+      this.startTime = Date.now();
+      this.hlsFallbackActive = true;
+
+      if (this.process.stdout) {
+        this.pipeFlvToPublisher(this.process.stdout as unknown as Readable, publisher);
+      }
+      this.process.stderr?.on("data", (d: Buffer) => {
+        this.parseFFmpegStats(d.toString());
+        logger.info({ ffmpeg: d.toString().trim() }, "FFmpeg[hls]");
+      });
+      this.process.on("close", (code) => {
+        const uptime = this.startTime ? Math.floor((Date.now() - this.startTime) / 1000) : 0;
+        this.totalUptimeSeconds += uptime;
+        if (this.stats.state === "stopping") {
+          this.stats.state = "idle";
+          this.hlsFallbackActive = false;
+          this.cleanup();
+          this.emit();
+        } else if (this.hlsFallbackActive && this.stats.state === "live") {
+          // Restart HLS relay if RTMP source is still flowing
+          logger.warn({ code }, "HLS relay FFmpeg exited — restarting");
+          this.hlsFallbackActive = false;
+          this._switchToHlsFallback();
+        } else if (this.stats.state !== "reconnecting") {
+          this._scheduleReconnect(`FFmpeg[hls] exited (code ${code})`);
+        }
+      });
+      this.process.on("error", (err) => {
+        this.stats.state = "error";
+        this.stats.errorMessage = err.message;
+        this.hlsFallbackActive = false;
+        this.cleanup();
+        this.emit();
+      });
+
+      this.stats.state = "live";
+      this.emit();
+
+      this.statsInterval = setInterval(() => {
+        if (this.startTime) this.stats.uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
+        this.stats.memoryMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
+        this.emit();
+      }, 1000);
+      this.cpuInterval = setInterval(() => { this.stats.cpuUsage = this.getCpuUsage(); }, 5000);
+
+    } catch (err: any) {
+      logger.error({ err }, "HLS fallback failed — stopping stream");
+      this.stats.state = "error";
+      this.stats.errorMessage = `HLS fallback failed: ${err?.message ?? String(err)}`;
+      this.hlsFallbackActive = false;
+      this.cleanup();
+      this.emit();
+    }
+  }
+
   stop(): void {
     if (this.reconnectTimerId) { clearTimeout(this.reconnectTimerId); this.reconnectTimerId = null; }
     if (this.connectTimeoutId) { clearTimeout(this.connectTimeoutId); this.connectTimeoutId = null; }
     this.reconnectAttempts = 0;
     this.activeConfig = null;
     this.liveStartedAt = null;
+    this.hlsFallbackActive = false;
 
     if (!this.process) {
       this.pendingConfig = null;
