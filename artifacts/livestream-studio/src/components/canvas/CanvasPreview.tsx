@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
+import Hls from 'hls.js';
 import { useStudio } from '@/context/StudioContext';
 import { useListSources, useUpdateSource, useGetOutputConfig, getListSourcesQueryKey } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -401,6 +402,9 @@ function SourceContent({ source, interactMode }: { source: any; interactMode?: b
     case 'camera':
       return <LiveCamera deviceId={s.deviceId} mirror={s.mirror} />;
 
+    case 'rtmp':
+      return <RtmpSource streamKey={s.streamKey} />;
+
     case 'display':
       return <PlaceholderBox label="Screen Capture" color="#1a3a1e" icon="🖥" />;
 
@@ -570,4 +574,92 @@ function SlideshowSource({ urls, interval }: { urls: string[]; interval: number 
   return url ? (
     <img src={url} alt="" className="w-full h-full object-contain" />
   ) : <PlaceholderBox label="Slideshow" color="#1a1e2a" icon="🖼" />;
+}
+
+function RtmpSource({ streamKey }: { streamKey?: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const [isLive, setIsLive] = useState(false);
+
+  const hlsUrl = streamKey ? `/api/hls/live/${streamKey}/index.m3u8` : null;
+
+  useEffect(() => {
+    if (!hlsUrl) return;
+
+    let mounted = true;
+    let pollTimer: ReturnType<typeof setTimeout>;
+
+    const loadHls = () => {
+      if (!videoRef.current || !mounted) return;
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          liveSyncDurationCount: 2,
+          liveMaxLatencyDurationCount: 4,
+          enableWorker: false,
+        });
+        hlsRef.current = hls;
+        hls.loadSource(hlsUrl);
+        hls.attachMedia(videoRef.current);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (mounted) videoRef.current?.play().catch(() => {});
+        });
+        hls.on(Hls.Events.ERROR, (_, data) => {
+          if (data.fatal && mounted) {
+            hls.destroy();
+            hlsRef.current = null;
+            setIsLive(false);
+            pollTimer = setTimeout(tryLoad, 4000);
+          }
+        });
+      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari native HLS
+        videoRef.current.src = hlsUrl;
+        videoRef.current.play().catch(() => {});
+      }
+    };
+
+    const tryLoad = async () => {
+      if (!mounted) return;
+      try {
+        const res = await fetch(hlsUrl, { method: 'HEAD', cache: 'no-store' });
+        if (res.ok && mounted) {
+          setIsLive(true);
+          loadHls();
+          return;
+        }
+      } catch { /* stream not yet available */ }
+      if (mounted) pollTimer = setTimeout(tryLoad, 3000);
+    };
+
+    tryLoad();
+
+    return () => {
+      mounted = false;
+      clearTimeout(pollTimer);
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+    };
+  }, [hlsUrl]);
+
+  if (!streamKey) return <PlaceholderBox label="RTMP Source" color="#0d1a2a" icon="📡" />;
+
+  return (
+    <div className="relative w-full h-full bg-black">
+      <video
+        ref={videoRef}
+        className="w-full h-full object-contain"
+        autoPlay
+        muted
+        playsInline
+        style={{ display: isLive ? 'block' : 'none' }}
+      />
+      {!isLive && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+          <span style={{ fontSize: '2rem', lineHeight: 1 }}>📡</span>
+          <span className="text-xs text-white/50 font-mono tracking-widest uppercase">Chờ tín hiệu…</span>
+          <span className="text-[10px] text-white/25 font-mono mt-0.5">key: {streamKey}</span>
+        </div>
+      )}
+    </div>
+  );
 }

@@ -502,6 +502,10 @@ function SourceSettings({
         </div>
       );
 
+    /* ---- RTMP INPUT (DJI Fly / OBS) ---- */
+    case 'rtmp':
+      return <RtmpSettings settings={settings} />;
+
     /* ---- WATERMARK ---- */
     case 'watermark':
       return (
@@ -707,6 +711,121 @@ function UrlListSettings({
 /* ------------------------------------------------------------------ */
 /* RTMP Input (DJI Fly / external encoder)                             */
 /* ------------------------------------------------------------------ */
+
+function RtmpSettings({ settings }: { settings: Record<string, any> }) {
+  const streamKey = settings.streamKey as string | undefined;
+  const [rtmpStatus, setRtmpStatus] = useState<{
+    publicUrl: string | null;
+    tunnelStatus: string;
+    activeStreams: string[];
+  } | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/rtmp/status');
+        if (res.ok && mounted) {
+          const data = await res.json();
+          setRtmpStatus(data);
+        }
+      } catch { /* ignore */ }
+      if (mounted) timer = setTimeout(poll, 5000);
+    };
+
+    poll();
+    return () => { mounted = false; clearTimeout(timer); };
+  }, []);
+
+  const isLive = streamKey
+    ? (rtmpStatus?.activeStreams ?? []).some(
+        (p) => p === `live/${streamKey}` || p === streamKey
+      )
+    : false;
+
+  // Full RTMP URL for DJI Fly: "rtmp://bore.pub:PORT/live/STREAMKEY"
+  const serverBase = rtmpStatus?.publicUrl ?? null;          // "rtmp://bore.pub:PORT/live"
+  const fullRtmpUrl = serverBase && streamKey
+    ? `${serverBase}/${streamKey}`
+    : null;
+
+  const copyText = (text: string, label: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(label);
+      setTimeout(() => setCopied(null), 2000);
+    }).catch(() => {});
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Live status */}
+      <Row label="Trạng thái">
+        <div className={`flex items-center gap-1.5 text-xs font-medium ${isLive ? 'text-green-400' : 'text-muted-foreground'}`}>
+          {isLive ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
+          {isLive ? 'Đang phát sóng' : 'Chờ tín hiệu'}
+        </div>
+      </Row>
+
+      {/* Stream Key */}
+      <div className="space-y-1">
+        <Label className="text-[10px] text-muted-foreground uppercase">Stream Key</Label>
+        <div className="flex gap-1.5">
+          <Input className="h-7 text-xs flex-1 font-mono" value={streamKey ?? ''} readOnly />
+          {streamKey && (
+            <Button
+              variant="outline" size="icon" className="h-7 w-7 shrink-0"
+              onClick={() => copyText(streamKey, 'key')}
+              title="Copy stream key"
+            >
+              {copied === 'key' ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Full RTMP URL for DJI Fly */}
+      <div className="space-y-1">
+        <Label className="text-[10px] text-muted-foreground uppercase">URL RTMP (nhập vào DJI Fly)</Label>
+        {fullRtmpUrl ? (
+          <div className="flex gap-1.5">
+            <Input className="h-7 text-xs flex-1 font-mono" value={fullRtmpUrl} readOnly />
+            <Button
+              variant="outline" size="icon" className="h-7 w-7 shrink-0"
+              onClick={() => copyText(fullRtmpUrl, 'url')}
+              title="Copy RTMP URL"
+            >
+              {copied === 'url' ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+            </Button>
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            {rtmpStatus?.tunnelStatus === 'starting' ? 'Đang kết nối tunnel…' : 'Chưa kết nối tunnel'}
+          </div>
+        )}
+      </div>
+
+      {/* Instructions */}
+      <div className="rounded-md bg-muted/50 border border-border/50 p-2.5 space-y-2">
+        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">
+          Hướng dẫn DJI Fly
+        </p>
+        <ol className="text-[11px] text-muted-foreground space-y-1.5 list-decimal list-inside leading-relaxed">
+          <li>Mở DJI Fly → vào <strong className="text-foreground">Live</strong></li>
+          <li>Chọn <strong className="text-foreground">Custom RTMP</strong></li>
+          <li>Dán <strong className="text-foreground">URL RTMP</strong> ở trên vào ô Server</li>
+          <li>Nhấn <strong className="text-foreground">Go Live</strong></li>
+        </ol>
+        <p className="text-[10px] text-muted-foreground/70 leading-relaxed mt-1">
+          Nếu DJI Fly yêu cầu Server và Stream Key riêng: dùng <code className="text-foreground/70">{serverBase ?? '—'}</code> làm server và <code className="text-foreground/70">{streamKey ? `live/${streamKey}` : '—'}</code> làm stream key.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Camera device picker (live enumeration)                              */

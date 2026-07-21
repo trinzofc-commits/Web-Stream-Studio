@@ -1,20 +1,32 @@
 ---
-name: RTMP Input Source (DJI Fly)
-description: How the RTMP ingest source type works — NMS + HLS transcode pipeline
+name: RTMP Input Source
+description: Full architecture for receiving DJI Fly RTMP stream → HLS → canvas preview
 ---
 
-# RTMP Input Source
+# RTMP Input Source Architecture
 
-**Why:** User needs to take DJI Fly drone camera feed as a studio source layer.
+**Flow:** DJI Fly → bore tunnel :1935 → MediaMTX → FFmpeg → HLS files → `/api/hls/` → hls.js in frontend canvas
 
-**Architecture:**
-- `node-media-server` listens on TCP port 1935 for RTMP pushes from DJI Fly
-- On `postPublish`: FFmpeg pulls from `rtmp://127.0.0.1:1935{path}`, transcodes to HLS segments at `/tmp/hls/{key}/`
-- Express serves HLS at `/api/hls/{key}/index.m3u8` (path `/api` is proxied by Replit to api-server)
-- Browser: `hls.js` in `StreamCompositor` plays HLS in a hidden `<video>` element, drawn on canvas
+## MediaMTX config (per-stream-key HLS)
+`runOnReady` in mediamtx.yml uses `sh -c 'mkdir -p /tmp/hls/$MTX_PATH && ffmpeg ...'` so each stream gets its own HLS directory at `/tmp/hls/$MTX_PATH/`. `$MTX_PATH` is expanded by the shell (e.g. `live/abc123`). This was changed from a hardcoded `/tmp/hls/live/index.m3u8` to support multiple simultaneous streams.
 
-**Key constraint:** Port 1935 is raw TCP — not proxied by Replit's HTTP proxy. DJI Fly device must reach the server directly on port 1935 (same network or publicly exposed).
+**Why:** Hardcoded path meant only one stream at a time and `isStreamActive` was always checking the same file regardless of stream key.
 
-**How to apply:** Source type string is `'rtmp'`. `streamKey` in source settings selects the stream. HLS URL is `/api/hls/{streamKey}/index.m3u8`.
+## HLS URL pattern
+`/api/hls/live/<streamKey>/index.m3u8` — served by express.static on HLS_ROOT in app.ts.
 
-**Status polling:** PropertiesPanel polls `/api/rtmp/streams/{key}` every 3s to show live indicator.
+## Bore tunnel
+`boreTunnel.ts` exposes `getPublicRtmpUrl()` → `rtmp://bore.pub:PORT/live`. Full stream URL for DJI Fly: `rtmp://bore.pub:PORT/live/<streamKey>`.
+
+## API endpoint
+`GET /api/rtmp/status` → `{ publicUrl, tunnelStatus, activeStreams[] }` — used by PropertiesPanel.
+
+## Frontend
+- `SourcePanel.tsx`: `rtmp: Wifi` icon added to `sourceIcons`
+- `CanvasPreview.tsx`: `RtmpSource` component polls HLS URL (HEAD request every 3s), loads with hls.js on MANIFEST_PARSED, shows "Chờ tín hiệu…" placeholder until stream connects
+- `PropertiesPanel.tsx`: `RtmpSettings` component shows stream key, full RTMP URL, live status, DJI Fly instructions in Vietnamese
+
+## DJI Fly setup
+- Server URL: `rtmp://bore.pub:PORT` (without `/live`)
+- Stream key: `live/<streamKey>`
+- Or full URL field: `rtmp://bore.pub:PORT/live/<streamKey>`
