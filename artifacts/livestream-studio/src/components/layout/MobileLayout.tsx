@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Video, Layers, Radio, Music2, Settings, Plus, Trash2, Eye, EyeOff, Play, Square, RefreshCw, ChevronRight, Copy, Image as ImageIcon, Film, Type, LayoutGrid, Clock, Timer, QrCode, Bookmark, Stamp, List, Music, Globe, Maximize2, X, Wifi } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -172,30 +172,219 @@ function MobileTabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) =>
   );
 }
 
+// ─── Transition picker ──────────────────────────────────────────────────────────
+
+const TRANSITION_DEFS = [
+  { type: 'cut',      label: 'Cut',      defaultMs: 0   },
+  { type: 'fade',     label: 'Fade',     defaultMs: 600 },
+  { type: 'dissolve', label: 'Dissolve', defaultMs: 500 },
+  { type: 'slide',    label: 'Slide',    defaultMs: 500 },
+  { type: 'swipe',    label: 'Swipe',    defaultMs: 400 },
+  { type: 'zoom',     label: 'Zoom',     defaultMs: 500 },
+] as const;
+
+/** Mini animated preview thumbnail for a single transition type. Loops every 1.8 s. */
+function MiniPreview({ type, playing }: { type: string; playing: boolean }) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const rafRef     = useRef<number | null>(null);
+  const loopRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const runAnim = useCallback(() => {
+    const el = overlayRef.current;
+    if (!el) return;
+    const dur = type === 'cut' ? 120 : 600;
+    const start = performance.now();
+
+    const tick = (now: number) => {
+      const p = Math.min(1, (now - start) / dur);
+      el.style.opacity = '1';
+
+      if (type === 'cut') {
+        el.style.opacity = p < 0.5 ? '1' : '0';
+        el.style.transform = 'none';
+        el.style.background = '#06b6d4';
+      } else if (type === 'fade') {
+        el.style.opacity = String(Math.sin(p * Math.PI));
+        el.style.transform = 'none';
+        el.style.background = '#000';
+      } else if (type === 'dissolve') {
+        el.style.opacity = String(1 - p);
+        el.style.transform = 'none';
+        el.style.background = '#000';
+      } else if (type === 'slide') {
+        const pct = p < 0.5 ? (1 - p * 2) * 100 : (p - 0.5) * 200;
+        el.style.opacity = '1';
+        el.style.background = '#06b6d4';
+        el.style.transform = `translateX(${pct * (p < 0.5 ? -1 : 1)}%)`;
+      } else if (type === 'swipe') {
+        el.style.opacity = String(1 - p);
+        el.style.background = 'linear-gradient(90deg, transparent, #06b6d4 60%)';
+        el.style.transform = `translateX(${p * 40}%)`;
+      } else if (type === 'zoom') {
+        el.style.opacity = String(Math.sin(p * Math.PI) * 0.9);
+        el.style.background = '#000';
+        el.style.transform = `scale(${1 + p * 0.15})`;
+      }
+
+      if (p < 1) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        el.style.opacity = '0';
+        // Loop
+        loopRef.current = setTimeout(runAnim, 900);
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+  }, [type]);
+
+  useEffect(() => {
+    if (!playing) {
+      if (rafRef.current)  cancelAnimationFrame(rafRef.current);
+      if (loopRef.current) clearTimeout(loopRef.current);
+      if (overlayRef.current) overlayRef.current.style.opacity = '0';
+      return;
+    }
+    runAnim();
+    return () => {
+      if (rafRef.current)  cancelAnimationFrame(rafRef.current);
+      if (loopRef.current) clearTimeout(loopRef.current);
+    };
+  }, [playing, runAnim]);
+
+  return (
+    /* Thumbnail: two stacked colour blocks + animated overlay */
+    <div className="relative w-14 h-9 rounded overflow-hidden shrink-0">
+      {/* "old scene" — darker teal */}
+      <div className="absolute inset-0 bg-teal-900/80" />
+      {/* "new scene" — lighter, shows through as overlay leaves */}
+      <div className="absolute inset-0 bg-teal-500/40" />
+      {/* Animated overlay */}
+      <div
+        ref={overlayRef}
+        className="absolute inset-0"
+        style={{ opacity: 0, willChange: 'transform, opacity', overflow: 'hidden' }}
+      />
+      {/* Scene divider lines */}
+      <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-white/10" />
+    </div>
+  );
+}
+
+function TransitionPicker({
+  selected,
+  durationMs,
+  onChange,
+}: {
+  selected: string;
+  durationMs: number;
+  onChange: (type: string, ms: number) => void;
+}) {
+  const [hovered, setHovered] = useState<string | null>(null);
+  const isSliderVisible = selected !== 'cut';
+
+  return (
+    <div className="px-3 py-2 border-b border-border shrink-0 space-y-2">
+      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+        Hiệu ứng chuyển scene
+      </span>
+      {/* Transition cards */}
+      <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+        {TRANSITION_DEFS.map(({ type, label }) => {
+          const isActive = selected === type;
+          const isPlaying = hovered === type || isActive;
+          return (
+            <button
+              key={type}
+              onMouseEnter={() => setHovered(type)}
+              onMouseLeave={() => setHovered(null)}
+              onTouchStart={() => setHovered(type)}
+              onTouchEnd={() => setHovered(null)}
+              onClick={() => onChange(type, type === 'cut' ? 0 : durationMs || TRANSITION_DEFS.find(d => d.type === type)!.defaultMs)}
+              className={`flex flex-col items-center gap-1 px-2 py-1.5 rounded-lg border shrink-0 transition-colors ${
+                isActive
+                  ? 'border-primary bg-primary/15'
+                  : 'border-border bg-muted/30 hover:bg-muted/60'
+              }`}
+            >
+              <MiniPreview type={type} playing={isPlaying} />
+              <span className={`text-[10px] font-medium ${isActive ? 'text-primary' : 'text-muted-foreground'}`}>
+                {label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Duration slider — hidden for Cut */}
+      {isSliderVisible && (
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground shrink-0">Thời gian</span>
+          <Slider
+            min={100}
+            max={1500}
+            step={50}
+            value={[durationMs]}
+            onValueChange={([v]) => onChange(selected, v)}
+            className="flex-1"
+          />
+          <span className="text-[10px] text-muted-foreground w-10 text-right shrink-0">
+            {durationMs}ms
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Scene tab ──────────────────────────────────────────────────────────────────
 function SceneTab() {
-  const { activeProjectId, activeSceneId, setActiveSceneId, setActiveSourceId } = useStudio();
+  const { activeProjectId, activeSceneId, setActiveSourceId, switchScene } = useStudio();
   const queryClient = useQueryClient();
   const { data: scenes = [] } = useListScenes(activeProjectId!, { query: { enabled: !!activeProjectId } });
   const createScene = useCreateScene();
   const deleteScene = useDeleteScene();
   const duplicateScene = useDuplicateScene();
 
+  // Transition state — persisted in component lifetime
+  const [transType, setTransType] = useState<string>('cut');
+  const [transDuration, setTransDuration] = useState<number>(500);
+
+  const handleTransitionChange = (type: string, ms: number) => {
+    setTransType(type);
+    setTransDuration(ms);
+  };
+
   const handleCreate = () => {
     if (!activeProjectId) return;
     createScene.mutate({ projectId: activeProjectId, data: { name: `Scene ${scenes.length + 1}` } }, {
-      onSuccess: (s) => { queryClient.invalidateQueries({ queryKey: getListScenesQueryKey(activeProjectId) }); setActiveSceneId(s.id); },
+      onSuccess: (s) => { queryClient.invalidateQueries({ queryKey: getListScenesQueryKey(activeProjectId) }); switchScene(s.id); },
     });
+  };
+
+  const handleSceneClick = (sceneId: number) => {
+    setActiveSourceId(null);
+    switchScene(sceneId, transType === 'cut' ? undefined : { type: transType, durationMs: transDuration });
   };
 
   return (
     <div className="flex flex-col h-full">
+      {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Scenes</span>
         <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleCreate}>
           <Plus className="w-3.5 h-3.5" /> Thêm scene
         </Button>
       </div>
+
+      {/* Transition picker */}
+      <TransitionPicker
+        selected={transType}
+        durationMs={transDuration}
+        onChange={handleTransitionChange}
+      />
+
+      {/* Scene list */}
       <ScrollArea className="flex-1">
         <div className="p-2 space-y-1">
           {scenes.map((scene) => (
@@ -206,7 +395,7 @@ function SceneTab() {
                   ? 'bg-primary/20 border border-primary/30'
                   : 'bg-muted/30 border border-transparent hover:bg-muted/50'
               }`}
-              onClick={() => { setActiveSceneId(scene.id); setActiveSourceId(null); }}
+              onClick={() => handleSceneClick(scene.id)}
             >
               <Layers className={`w-4 h-4 shrink-0 ${activeSceneId === scene.id ? 'text-primary' : 'text-muted-foreground'}`} />
               <span className={`flex-1 text-sm font-medium truncate ${activeSceneId === scene.id ? 'text-primary' : 'text-foreground'}`}>
@@ -233,7 +422,7 @@ function SceneTab() {
                     onClick={() => deleteScene.mutate({ id: scene.id }, {
                       onSuccess: () => {
                         queryClient.invalidateQueries({ queryKey: getListScenesQueryKey(activeProjectId!) });
-                        if (activeSceneId === scene.id) { setActiveSceneId(null); setActiveSourceId(null); }
+                        if (activeSceneId === scene.id) { switchScene(0); setActiveSourceId(null); }
                       },
                     })}
                   >
