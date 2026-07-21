@@ -107,7 +107,7 @@ class StreamManager {
     } catch { return 0; }
   }
 
-  async start(rtmpUrl: string, streamKey: string, fps = 30, videoBitrate = 4000): Promise<void> {
+  async start(rtmpUrl: string, streamKey: string, fps = 30, videoBitrate = 2500): Promise<void> {
     if (this.process) throw new Error("Stream already running");
     if (!rtmpUrl || !streamKey) throw new Error("RTMP URL and stream key are required");
 

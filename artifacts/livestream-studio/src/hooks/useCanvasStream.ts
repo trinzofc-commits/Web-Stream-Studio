@@ -70,7 +70,7 @@ const VIDEO_MIME_PREFERENCES_NO_AUDIO = [
 const CHUNK_TIMESLICE_MS = 250;
 
 /** Target video bitrate in kbps sent to MediaRecorder (server FFmpeg re-encodes anyway). */
-const VIDEO_BITRATE_KBPS = 3_000;
+const VIDEO_BITRATE_KBPS = 2_000;
 
 /** Prefix a 1-byte tag in front of an ArrayBuffer. */
 function taggedMessage(tag: number, payload: ArrayBuffer): ArrayBuffer {

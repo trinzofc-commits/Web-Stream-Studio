@@ -57,7 +57,7 @@ router.post("/stream/start", async (req, res): Promise<void> => {
     // Read output config so FFmpeg uses the user-configured fps and bitrate
     const [outputConfig] = await db.select().from(outputConfigTable).limit(1);
     const fps = outputConfig?.fps ?? 30;
-    const videoBitrate = outputConfig?.videoBitrate ?? 4000;
+    const videoBitrate = outputConfig?.videoBitrate ?? 2500;
     await streamManager.start(parsed.data.rtmpUrl, parsed.data.streamKey, fps, videoBitrate);
     const stats = streamManager.getStats();
     res.json(StartStreamResponse.parse(stats));
