@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Video, Layers, Radio, Music2, Settings, Plus, Trash2, Eye, EyeOff, Play, Square, RefreshCw, ChevronRight, Copy, Image as ImageIcon, Film, Type, LayoutGrid, Clock, Timer, QrCode, Bookmark, Stamp, List, Music, Globe, Maximize2, X } from 'lucide-react';
+import { Video, Layers, Radio, Music2, Settings, Plus, Trash2, Eye, EyeOff, Play, Square, RefreshCw, ChevronRight, Copy, Image as ImageIcon, Film, Type, LayoutGrid, Clock, Timer, QrCode, Bookmark, Stamp, List, Music, Globe, Maximize2, X, Wifi } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -23,19 +23,20 @@ import { MediaLibraryModal } from '@/components/modals/MediaLibraryModal';
 
 // Source types shown on mobile — only functional ones
 const MOBILE_SOURCE_TYPES: { type: string; label: string; icon: any }[] = [
-  { type: 'camera',   label: 'Camera',         icon: Video },
-  { type: 'image',    label: 'Hình ảnh',       icon: ImageIcon },
-  { type: 'video',    label: 'Video',          icon: Film },
-  { type: 'text',     label: 'Văn bản',        icon: Type },
-  { type: 'color',    label: 'Màu nền',        icon: LayoutGrid },
-  { type: 'clock',    label: 'Đồng hồ',        icon: Clock },
-  { type: 'countdown',label: 'Đếm ngược',     icon: Timer },
-  { type: 'qrcode',   label: 'QR Code',        icon: QrCode },
-  { type: 'logo',     label: 'Logo',           icon: Bookmark },
-  { type: 'watermark',label: 'Watermark',      icon: Stamp },
-  { type: 'audio',    label: 'Audio',          icon: Music },
-  { type: 'audioPlaylist', label: 'Playlist âm thanh', icon: List },
-  { type: 'browser',  label: 'Browser',        icon: Globe },
+  { type: 'rtmp',     label: 'RTMP (DJI / OBS)',       icon: Wifi },
+  { type: 'camera',   label: 'Camera',                  icon: Video },
+  { type: 'image',    label: 'Hình ảnh',                icon: ImageIcon },
+  { type: 'video',    label: 'Video',                   icon: Film },
+  { type: 'text',     label: 'Văn bản',                 icon: Type },
+  { type: 'color',    label: 'Màu nền',                 icon: LayoutGrid },
+  { type: 'clock',    label: 'Đồng hồ',                 icon: Clock },
+  { type: 'countdown',label: 'Đếm ngược',              icon: Timer },
+  { type: 'qrcode',   label: 'QR Code',                 icon: QrCode },
+  { type: 'logo',     label: 'Logo',                    icon: Bookmark },
+  { type: 'watermark',label: 'Watermark',               icon: Stamp },
+  { type: 'audio',    label: 'Audio',                   icon: Music },
+  { type: 'audioPlaylist', label: 'Playlist âm thanh',  icon: List },
+  { type: 'browser',  label: 'Browser',                 icon: Globe },
 ];
 
 const sourceIcons: Record<string, any> = Object.fromEntries(
