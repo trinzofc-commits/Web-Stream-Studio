@@ -26,6 +26,15 @@ export class StreamCompositor {
   private readonly fps = 30;
   private sources: Source[] = [];
 
+  // ── Transition state ────────────────────────────────────────────────────────
+  private transitionState: {
+    /** Snapshot of the outgoing frame captured just before the switch. */
+    outgoingCanvas: HTMLCanvasElement;
+    type: string;
+    durationMs: number;
+    startTime: number;
+  } | null = null;
+
   // Resource caches
   private imageCache = new Map<string, HTMLImageElement>();
   private videoCache = new Map<number, HTMLVideoElement>(); // key: source.id
@@ -58,6 +67,37 @@ export class StreamCompositor {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D not supported');
     this.ctx = ctx;
+  }
+
+  /**
+   * Begin an animated transition to a new set of sources.
+   * Snapshots the current canvas frame as the "outgoing" image and blends it
+   * with the incoming scene during drawFrame for the specified duration.
+   * Transition types: 'cut', 'fade', 'dissolve', 'slide', 'swipe', 'zoom'.
+   */
+  beginTransition(newSources: Source[], type: string, durationMs: number) {
+    if (type === 'cut') {
+      this.transitionState = null;
+      this.updateSources(newSources);
+      return;
+    }
+
+    // Snapshot the current rendered frame into an offscreen canvas
+    const offscreen = document.createElement('canvas');
+    offscreen.width = this.canvas.width;
+    offscreen.height = this.canvas.height;
+    const offCtx = offscreen.getContext('2d');
+    if (offCtx) offCtx.drawImage(this.canvas, 0, 0);
+
+    this.transitionState = {
+      outgoingCanvas: offscreen,
+      type,
+      durationMs,
+      startTime: Date.now(),
+    };
+
+    // Update source list and preload incoming assets
+    this.updateSources(newSources);
   }
 
   /** Update the source list and preload/prepare media assets */
@@ -398,16 +438,72 @@ export class StreamCompositor {
 
   private drawFrame() {
     const { ctx } = this;
-    // Black background
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    const W = this.canvas.width;
+    const H = this.canvas.height;
 
+    // Draw the incoming (current) scene
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(0, 0, W, H);
     const visible = [...this.sources]
       .filter((s) => s.visible)
       .sort((a, b) => a.sortOrder - b.sortOrder);
-
     for (const source of visible) {
       this.drawSource(source);
+    }
+
+    // Overlay the transition effect
+    if (this.transitionState) {
+      const elapsed = Date.now() - this.transitionState.startTime;
+      const progress = Math.min(1, elapsed / this.transitionState.durationMs);
+      const { type, outgoingCanvas } = this.transitionState;
+
+      ctx.save();
+      switch (type) {
+        case 'fade': {
+          // Black overlay, opacity peaks at the midpoint (sin curve)
+          const alpha = Math.sin(progress * Math.PI);
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = '#000000';
+          ctx.fillRect(0, 0, W, H);
+          break;
+        }
+        case 'dissolve': {
+          // Old frame dissolves out on top of new frame
+          ctx.globalAlpha = 1 - progress;
+          ctx.drawImage(outgoingCanvas, 0, 0);
+          break;
+        }
+        case 'slide': {
+          // Old frame slides out to the left, new frame slides in from the right
+          const offset = Math.round(progress * W);
+          ctx.globalAlpha = 1;
+          ctx.drawImage(outgoingCanvas, -offset, 0);
+          break;
+        }
+        case 'swipe': {
+          // Old frame is clipped and revealed from left to right
+          ctx.globalAlpha = 1;
+          const clipW = Math.round((1 - progress) * W);
+          if (clipW > 0) {
+            ctx.drawImage(outgoingCanvas, 0, 0, clipW, H, 0, 0, clipW, H);
+          }
+          break;
+        }
+        case 'zoom': {
+          // Old frame scales up and fades out
+          const scale = 1 + progress * 0.3;
+          ctx.globalAlpha = 1 - progress;
+          ctx.translate(W / 2, H / 2);
+          ctx.scale(scale, scale);
+          ctx.drawImage(outgoingCanvas, -W / 2, -H / 2);
+          break;
+        }
+      }
+      ctx.restore();
+
+      if (progress >= 1) {
+        this.transitionState = null;
+      }
     }
   }
 

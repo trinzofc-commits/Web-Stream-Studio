@@ -85,15 +85,26 @@ export function useCanvasStream(
   streamState: string | undefined,
   canvasWidth: number,
   canvasHeight: number,
+  consumePendingTransition?: () => { type: string; durationMs: number } | null,
 ) {
   const compositorRef = useRef<StreamCompositor | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const isStreamingRef = useRef(false);
 
-  // Keep compositor in sync with sources at all times
+  // Keep compositor in sync with sources; apply pending transitions when sources change
+  const consumeRef = useRef(consumePendingTransition);
+  consumeRef.current = consumePendingTransition;
+
   useEffect(() => {
-    compositorRef.current?.updateSources(sources);
+    const compositor = compositorRef.current;
+    if (!compositor) return;
+    const transition = consumeRef.current?.();
+    if (transition && transition.type !== 'cut') {
+      compositor.beginTransition(sources, transition.type, transition.durationMs);
+    } else {
+      compositor.updateSources(sources);
+    }
   }, [sources]);
 
   const stopStream = useCallback(() => {

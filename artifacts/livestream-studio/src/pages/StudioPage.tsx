@@ -35,6 +35,7 @@ function StudioContent() {
     setActiveSourceId,
     isLoading,
     activeProjectId,
+    consumePendingTransition,
   } = useStudio();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -61,7 +62,7 @@ function StudioContent() {
     outputConfig?.resolution ?? '1080p',
     (outputConfig as any)?.aspectRatio ?? 'landscape',
   );
-  useCanvasStream(sources, streamStatus?.state, canvasW, canvasH);
+  useCanvasStream(sources, streamStatus?.state, canvasW, canvasH, consumePendingTransition);
 
   // Global keyboard shortcuts
   useEffect(() => {

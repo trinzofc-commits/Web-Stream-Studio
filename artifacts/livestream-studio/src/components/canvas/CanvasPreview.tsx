@@ -8,6 +8,73 @@ import { Button } from '@/components/ui/button';
 import { Toggle } from '@/components/ui/toggle';
 import { useIsMobile } from '@/hooks/use-mobile';
 
+/** Animated CSS overlay that mirrors the compositor's transition effect in the preview. */
+function TransitionOverlay({ transition }: { transition: { type: string; durationMs: number } | null }) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!transition || !overlayRef.current) return;
+    const { type, durationMs } = transition;
+    const el = overlayRef.current;
+    const startTime = performance.now();
+
+    const animate = (now: number) => {
+      const progress = Math.min(1, (now - startTime) / durationMs);
+
+      if (type === 'fade') {
+        el.style.opacity = String(Math.sin(progress * Math.PI));
+        el.style.background = '#000';
+        el.style.transform = 'none';
+      } else if (type === 'dissolve') {
+        el.style.opacity = String(1 - progress);
+        el.style.background = '#000';
+        el.style.transform = 'none';
+      } else if (type === 'slide') {
+        // Cover slides in from right, then reveals the new scene
+        el.style.opacity = '1';
+        const pct = progress < 0.5
+          ? (1 - progress * 2) * 100   // slide from 0% offset to 0 (cover arrives)
+          : (progress - 0.5) * 200;    // then cover departs to the right
+        el.style.background = '#000';
+        el.style.transform = `translateX(${pct * (progress < 0.5 ? -1 : 1)}%)`;
+      } else if (type === 'swipe') {
+        el.style.opacity = String(1 - progress);
+        el.style.background = 'linear-gradient(90deg, transparent, #000 50%)';
+        el.style.transform = 'none';
+      } else if (type === 'zoom') {
+        el.style.opacity = String(Math.sin(progress * Math.PI) * 0.7);
+        el.style.background = '#000';
+        el.style.transform = `scale(${1 + progress * 0.1})`;
+      } else {
+        el.style.opacity = String(Math.sin(progress * Math.PI));
+        el.style.background = '#000';
+        el.style.transform = 'none';
+      }
+
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(animate);
+      } else {
+        el.style.opacity = '0';
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      if (overlayRef.current) overlayRef.current.style.opacity = '0';
+    };
+  }, [transition]);
+
+  return (
+    <div
+      ref={overlayRef}
+      className="absolute inset-0 pointer-events-none z-50"
+      style={{ opacity: 0, willChange: 'opacity, transform', transformOrigin: 'center' }}
+    />
+  );
+}
+
 type HandleDir = 'n' | 's' | 'e' | 'w' | 'nw' | 'ne' | 'sw' | 'se';
 
 const CURSORS: Record<HandleDir, string> = {
@@ -42,7 +109,7 @@ const RESOLUTION_BASE: Record<string, [number, number]> = {
 };
 
 export function CanvasPreview() {
-  const { activeSceneId, activeSourceId, setActiveSourceId } = useStudio();
+  const { activeSceneId, activeSourceId, setActiveSourceId, activeTransition } = useStudio();
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
@@ -181,6 +248,9 @@ export function CanvasPreview() {
               />
             );
           })}
+
+          {/* Transition overlay — animates on scene switch */}
+          <TransitionOverlay transition={activeTransition} />
         </div>
         </div>
       </div>

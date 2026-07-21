@@ -3,12 +3,21 @@ import { useStudio } from '@/context/StudioContext';
 import { useListScenes, useCreateScene, useDeleteScene, useUpdateScene, useDuplicateScene, getListScenesQueryKey } from '@workspace/api-client-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Plus, Trash2, Copy, Edit2, GripVertical } from 'lucide-react';
+import { Plus, Trash2, Copy, Edit2, GripVertical, Scissors, Layers, ArrowRight, ZoomIn, Blend, SplitSquareVertical } from 'lucide-react';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { useQueryClient } from '@tanstack/react-query';
 
+const TRANSITION_ICONS: Record<string, React.ReactNode> = {
+  cut:     <Scissors className="w-2.5 h-2.5" />,
+  fade:    <Layers className="w-2.5 h-2.5" />,
+  slide:   <ArrowRight className="w-2.5 h-2.5" />,
+  swipe:   <SplitSquareVertical className="w-2.5 h-2.5" />,
+  zoom:    <ZoomIn className="w-2.5 h-2.5" />,
+  dissolve: <Blend className="w-2.5 h-2.5" />,
+};
+
 export function ScenePanel() {
-  const { activeProjectId, activeSceneId, setActiveSceneId, setActiveSourceId } = useStudio();
+  const { activeProjectId, activeSceneId, switchScene, setActiveSourceId } = useStudio();
   const queryClient = useQueryClient();
   const [editingSceneId, setEditingSceneId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
@@ -99,8 +108,10 @@ export function ScenePanel() {
                       : 'hover:bg-muted text-foreground'
                   }`}
                   onClick={() => {
-                    setActiveSceneId(scene.id);
-                    setActiveSourceId(null);
+                    switchScene(scene.id, {
+                      type: scene.transitionType ?? 'fade',
+                      durationMs: scene.transitionDurationMs ?? 300,
+                    });
                   }}
                   onDoubleClick={() => {
                     setEditingSceneId(scene.id);
@@ -123,6 +134,13 @@ export function ScenePanel() {
                   ) : (
                     <span className="flex-1 truncate">{scene.name}</span>
                   )}
+                  {/* Transition type badge */}
+                  <span
+                    className="opacity-0 group-hover:opacity-60 transition-opacity text-muted-foreground flex-shrink-0"
+                    title={`Transition: ${scene.transitionType ?? 'fade'}`}
+                  >
+                    {TRANSITION_ICONS[scene.transitionType ?? 'fade'] ?? <Layers className="w-2.5 h-2.5" />}
+                  </span>
                 </div>
               </ContextMenuTrigger>
               <ContextMenuContent className="w-48">
