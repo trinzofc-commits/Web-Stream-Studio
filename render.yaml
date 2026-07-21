@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: web-stream-studio
+    env: docker
+    # Render sẽ tự động phát hiện và sử dụng Dockerfile trong thư mục gốc của dự án.
+    # Build command sẽ được xử lý bởi Dockerfile.
+    # Start command được định nghĩa trong Dockerfile (CMD ["node", "--enable-source-maps", "./dist/index.mjs"]).
+    # Port được định nghĩa trong Dockerfile (EXPOSE 8080 và ENV PORT=8080).
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Đặt giá trị này trong bảng điều khiển Render
+      - key: NODE_ENV
+        value: production
+    # Cần thêm một volume để lưu trữ dữ liệu HLS nếu muốn duy trì giữa các lần deploy
+    # volumes:
+    #   - name: hls-data
+    #     path: /tmp/hls

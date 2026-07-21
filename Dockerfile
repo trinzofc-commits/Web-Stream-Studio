@@ -34,9 +34,14 @@ FROM node:20-slim AS runner
 
 WORKDIR /app
 
-# ffmpeg is required for RTMP → HLS stream encoding
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+# ffmpeg and wget are required for RTMP → HLS stream encoding and downloading mediamtx
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg wget ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install mediamtx
+RUN wget https://github.com/bluenviron/mediamtx/releases/download/v1.12.2/mediamtx_v1.12.2_linux_amd64.tar.gz -O /tmp/mediamtx.tar.gz && \
+    tar -xzf /tmp/mediamtx.tar.gz -C /usr/local/bin/ && \
+    rm /tmp/mediamtx.tar.gz
 
 # Bundled API server (esbuild output — no node_modules needed)
 COPY --from=builder /app/artifacts/api-server/dist ./dist

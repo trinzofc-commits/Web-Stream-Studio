@@ -23,8 +23,7 @@ export function hlsPlaylistPath(streamPath: string): string {
   return `${HLS_ROOT}/${streamPath}/index.m3u8`;
 }
 
-const MEDIAMTX_BIN =
-  "/nix/store/692k40917r79aryiym4rdgpjnm3vn7fd-mediamtx-1.12.2/bin/mediamtx";
+const MEDIAMTX_BIN = process.env.MEDIAMTX_BIN || "mediamtx";
 const MEDIAMTX_CFG = "/tmp/mediamtx.yml";
 const MEDIAMTX_API  = "http://127.0.0.1:9997";
 
