@@ -3,6 +3,7 @@
  * Renders all scene sources onto a hidden HTML5 canvas at the configured
  * resolution and aspect ratio, and exposes a MediaStream via captureStream().
  */
+import Hls from 'hls.js';
 
 type Source = {
   id: number;
@@ -40,6 +41,14 @@ export class StreamCompositor {
   private videoCache = new Map<number, HTMLVideoElement>(); // key: source.id
   private cameraCache = new Map<string, HTMLVideoElement>(); // key: deviceId
   private cameraStreams = new Map<string, MediaStream>();
+  // key: source.id — HLS-backed video elements for RTMP sources
+  private rtmpCache = new Map<number, {
+    hls: Hls | null;
+    video: HTMLVideoElement;
+    streamKey: string;
+    ready: boolean;
+    pollTimer: ReturnType<typeof setTimeout> | null;
+  }>();
   private browserCache = new Map<number, {
     container: HTMLDivElement;
     iframe: HTMLIFrameElement;
@@ -199,6 +208,75 @@ export class StreamCompositor {
         }
       }
 
+      // RTMP sources — HLS playback via hls.js (mirrors RtmpSource in CanvasPreview)
+      if (src.type === 'rtmp') {
+        const key = s.streamKey as string | undefined;
+        if (key) {
+          const existing = this.rtmpCache.get(src.id);
+          // Recreate if stream key changed
+          if (existing && existing.streamKey !== key) {
+            existing.hls?.destroy();
+            if (existing.pollTimer !== null) clearTimeout(existing.pollTimer);
+            existing.video.pause();
+            existing.video.src = '';
+            this.rtmpCache.delete(src.id);
+          }
+          if (!this.rtmpCache.has(src.id)) {
+            const vid = document.createElement('video');
+            vid.autoplay = true;
+            vid.muted = true;
+            vid.playsInline = true;
+            const entry: (typeof this.rtmpCache extends Map<number, infer V> ? V : never) = {
+              hls: null,
+              video: vid,
+              streamKey: key,
+              ready: false,
+              pollTimer: null,
+            };
+            this.rtmpCache.set(src.id, entry);
+
+            const hlsUrl = `/api/hls/live/${key}/index.m3u8`;
+
+            const loadHls = () => {
+              if (!this.rtmpCache.has(src.id)) return;
+              if (Hls.isSupported()) {
+                const hls = new Hls({ liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 4, enableWorker: false });
+                entry.hls = hls;
+                hls.loadSource(hlsUrl);
+                hls.attachMedia(vid);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                  entry.ready = true;
+                  vid.play().catch(() => {});
+                });
+                hls.on(Hls.Events.ERROR, (_, data) => {
+                  if (data.fatal) {
+                    hls.destroy();
+                    entry.hls = null;
+                    entry.ready = false;
+                    entry.pollTimer = setTimeout(tryLoad, 4000);
+                  }
+                });
+              } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+                vid.src = hlsUrl;
+                vid.play().catch(() => {});
+                entry.ready = true;
+              }
+            };
+
+            const tryLoad = async () => {
+              if (!this.rtmpCache.has(src.id)) return;
+              try {
+                const res = await fetch(hlsUrl, { method: 'HEAD', cache: 'no-store' });
+                if (res.ok) { loadHls(); return; }
+              } catch { /* stream not yet available */ }
+              entry.pollTimer = setTimeout(tryLoad, 3000);
+            };
+
+            tryLoad();
+          }
+        }
+      }
+
       // Camera
       if (src.type === 'camera') {
         const key = s.deviceId ?? 'default';
@@ -250,6 +328,13 @@ export class StreamCompositor {
       vid.src = '';
     }
     this.videoCache.clear();
+    for (const entry of this.rtmpCache.values()) {
+      entry.hls?.destroy();
+      if (entry.pollTimer !== null) clearTimeout(entry.pollTimer);
+      entry.video.pause();
+      entry.video.src = '';
+    }
+    this.rtmpCache.clear();
     for (const entry of this.browserCache.values()) {
       entry.iframe.src = 'about:blank';
       entry.container.remove();
@@ -679,6 +764,23 @@ export class StreamCompositor {
           // Trigger async refresh every ~100 ms (10 fps for browser content)
           if (entry && !entry.capturing && Date.now() - entry.lastCapture > 100) {
             this.captureBrowserSnapshot(source.id, source.settings?.css as string | undefined);
+          }
+          break;
+        }
+
+        case 'rtmp': {
+          const entry = this.rtmpCache.get(source.id);
+          const vid = entry?.video;
+          if (entry?.ready && vid && vid.readyState >= 2 && vid.videoWidth > 0) {
+            this.drawContain(vid, x, y, width, height);
+          } else {
+            // Show "waiting for signal" placeholder
+            this.placeholder(ctx, x, y, width, height, '#0d1a2a');
+            ctx.fillStyle = 'rgba(255,255,255,0.25)';
+            ctx.font = '14px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('📡  Chờ tín hiệu RTMP…', x + width / 2, y + height / 2);
           }
           break;
         }
