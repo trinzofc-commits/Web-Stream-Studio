@@ -37,6 +37,27 @@ const sourceIcons: Record<string, any> = {
   rtmp: Wifi,
 };
 
+const sourceLabels: Record<string, string> = {
+  camera: 'Camera',
+  display: 'Screen Capture',
+  image: 'Image',
+  video: 'Video',
+  audio: 'Audio Input',
+  browser: 'Browser',
+  text: 'Text',
+  color: 'Color',
+  qrcode: 'QR Code',
+  clock: 'Clock',
+  countdown: 'Countdown',
+  slideshow: 'Slideshow',
+  videoPlaylist: 'Video Playlist',
+  audioPlaylist: 'Audio Playlist',
+  pdf: 'PDF',
+  logo: 'Logo',
+  watermark: 'Watermark',
+  rtmp: 'RTMP (DJI / OBS)',
+};
+
 const RESOLUTION_BASE: Record<string, [number, number]> = {
   '720p':  [1280, 720],
   '1080p': [1920, 1080],
@@ -265,11 +286,11 @@ export function SourcePanel() {
               <Plus className="w-4 h-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-48">
+          <DropdownMenuContent align="start" className="w-52 max-h-80 overflow-y-auto">
             {Object.entries(sourceIcons).map(([type, Icon]) => (
               <DropdownMenuItem key={type} onClick={() => handleCreateSource(type)}>
                 <Icon className="mr-2 w-4 h-4 text-muted-foreground" />
-                {type.charAt(0).toUpperCase() + type.slice(1)}
+                {sourceLabels[type] ?? type}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
