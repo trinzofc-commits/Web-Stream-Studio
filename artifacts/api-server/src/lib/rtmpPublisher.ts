@@ -188,6 +188,13 @@ export class RtmpPublisher extends EventEmitter {
   private outChunkSize = 4096;
   private publishReady = false;
 
+  // Window Acknowledgement — Facebook requires the publisher to send
+  // Acknowledgement (type 3) when cumulative bytes received exceed the window.
+  // Without this Facebook throttles/drops the inbound connection.
+  private windowAckSize = 2_500_000; // default until server sets it
+  private bytesReceived = 0;
+  private lastAckSent = 0;
+
   // ── Public API ──────────────────────────────────────────────────────────────
 
   async connect(rtmpUrl: string): Promise<void> {
@@ -204,6 +211,15 @@ export class RtmpPublisher extends EventEmitter {
       ? tls.connect({ host, port, servername: host, rejectUnauthorized: true })
       : net.connect({ host, port });
     this.sock = sock;
+
+    // Disable Nagle algorithm — critical for low-latency RTMP streaming.
+    // Without this, the OS batches small writes into ~200ms windows, causing
+    // visible FPS drops and audio/video drift on Facebook Live.
+    sock.setNoDelay(true);
+
+    // TCP keepalive — detects dead connections within ~30s instead of waiting
+    // for the OS default (minutes), triggering faster reconnect on Facebook drops.
+    sock.setKeepAlive(true, 15_000);
 
     await new Promise<void>((resolve, reject) => {
       (sock as tls.TLSSocket | net.Socket).once(
@@ -347,6 +363,28 @@ export class RtmpPublisher extends EventEmitter {
 
   private onData(d: Buffer): void {
     this.raw = Buffer.concat([this.raw, d]);
+
+    // Track bytes received and send Window Acknowledgement when due.
+    // Facebook's RTMP server sets a window size and expects periodic acks;
+    // missing them causes the server to stall or drop the connection.
+    this.bytesReceived += d.length;
+    if (this.bytesReceived - this.lastAckSent >= this.windowAckSize) {
+      this.lastAckSent = this.bytesReceived;
+      if (this.sock && this.handshakeDone) {
+        try {
+          const ack = Buffer.allocUnsafe(4);
+          // >>> 0 coerces to an *unsigned* 32-bit integer, preventing the
+          // RangeError that writeUInt32BE throws when the value is negative
+          // (JS bitwise ops are signed; & 0xffffffff overflows after 2^31-1 bytes).
+          ack.writeUInt32BE(this.bytesReceived >>> 0, 0);
+          this.sock.write(encodeChunks(2, 3 /* Acknowledgement */, 0, 0, ack, 128));
+        } catch {
+          // Never crash the data path on an ack write error — the stream
+          // state is still valid; missed acks are tolerated by most servers.
+        }
+      }
+    }
+
     if (!this.handshakeDone) {
       this.tryFlushRaw();
     } else {
@@ -450,7 +488,12 @@ export class RtmpPublisher extends EventEmitter {
     } else if (type === 4) {
       // User Control — ignore
     } else if (type === 5) {
-      // Window Acknowledgement Size — ignore
+      // Window Acknowledgement Size — update our window tracker so we send
+      // acks at the correct cadence the server expects.
+      if (data.length >= 4) {
+        this.windowAckSize = data.readUInt32BE(0);
+        logger.debug({ windowAckSize: this.windowAckSize }, "RtmpPublisher: window ack size updated");
+      }
     } else if (type === 6) {
       // Set Peer Bandwidth — ignore
     } else if (type === 20) {

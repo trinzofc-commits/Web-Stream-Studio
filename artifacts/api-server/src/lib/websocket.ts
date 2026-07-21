@@ -8,6 +8,11 @@ export function createWebSocketServer(server: import("http").Server) {
 
   logger.info("WebSocket server created on /ws");
 
+  // WebSocket-level ping/pong keepalive — without this, idle connections can be
+  // silently dropped by proxies or the Replit edge layer, causing the browser to
+  // lose stream status updates or (worse) the FFmpeg pipe to break mid-stream.
+  const PING_INTERVAL_MS = 20_000;
+
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     logger.info({ url: req.url }, "WebSocket client connected");
 
@@ -15,9 +20,22 @@ export function createWebSocketServer(server: import("http").Server) {
     const url = new URL(req.url ?? "", "http://localhost");
     const isStreamClient = url.searchParams.get("role") === "stream";
 
+    // Start WS-level ping so the connection stays alive through any proxy.
+    let pingTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.ping();
+      }
+    }, PING_INTERVAL_MS);
+
+    const clearPing = () => {
+      if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+    };
+
     if (isStreamClient) {
       // Hand off to stream manager which spawns FFmpeg and pipes binary data from this ws
       streamManager.attachStreamClient(ws);
+      ws.on("close", clearPing);
+      ws.on("error", clearPing);
       return;
     }
 
@@ -48,11 +66,13 @@ export function createWebSocketServer(server: import("http").Server) {
 
     ws.on("close", () => {
       logger.info("WebSocket client disconnected");
+      clearPing();
       unsub();
     });
 
     ws.on("error", (err) => {
       logger.error({ err }, "WebSocket error");
+      clearPing();
       unsub();
     });
   });

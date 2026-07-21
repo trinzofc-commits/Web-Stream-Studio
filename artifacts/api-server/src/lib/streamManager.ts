@@ -30,8 +30,11 @@ const OUTPUT_FPS = 30;
 /** Maximum auto-reconnect attempts before giving up */
 const MAX_RECONNECT = 5;
 
+// Reconnect starts at 1 s and doubles up to 8 s.
+// The previous 3 s start was too slow — a 3+ second gap causes Facebook Live
+// to terminate the stream entirely. Staying under 2 s keeps FB alive.
 function reconnectDelayMs(attempt: number): number {
-  return Math.min(3000 * Math.pow(2, attempt - 1), 48_000);
+  return Math.min(1000 * Math.pow(2, attempt - 1), 8_000);
 }
 
 /**
@@ -193,9 +196,12 @@ class StreamManager {
     let mimeType = "video/webm";
     let handshakeReceived = false;
 
-    // Buffers hold bytes until FFmpeg stdin is ready
+    // Buffers hold bytes until FFmpeg stdin is ready.
+    // 300 chunks (~75 s) was far too large — it caused multi-second startup
+    // delay and memory pressure. 20 chunks (~5 s) is enough to cover the
+    // RTMP connect + FFmpeg spawn window without building a backlog.
     const videoBuffer: Buffer[] = [];
-    const MAX_VIDEO_BUFFER = 300; // ~75 s of 250 ms chunks
+    const MAX_VIDEO_BUFFER = 20;
 
     const messageHandler = (rawData: unknown, isBinary: boolean) => {
       if (!isBinary) return;
@@ -301,7 +307,11 @@ class StreamManager {
       // ── Combined WebM from MediaRecorder ────────────────────────────────
       const demuxer = ffmpegDemuxer(mimeType);
       videoInputArgs = [
-        "-fflags", "+nobuffer+genpts",
+        // Reduce probe time to near-zero — the default wastes 5 s analyzing
+        // the WebM header before any frames are output, adding visible startup delay.
+        "-probesize", "32",
+        "-analyzeduration", "0",
+        "-fflags", "+nobuffer+genpts+flush_packets",
         "-flags", "low_delay",
         "-f", demuxer,
         "-i", "pipe:0",
@@ -335,7 +345,13 @@ class StreamManager {
 
     const encodeArgs = [
       "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-      "-b:v", bitrateK, "-maxrate", maxrateK, "-bufsize", bufsizeK,
+      // CBR enforcement: minrate = maxrate = b:v forces a constant bitrate.
+      // Facebook Live requires stable CBR; without minrate the encoder drops
+      // bitrate during low-motion scenes, causing Facebook to stall the stream.
+      "-b:v", bitrateK, "-minrate", bitrateK, "-maxrate", maxrateK, "-bufsize", bufsizeK,
+      // force-cfr + nal-hrd=cbr: x264 fills bits even during easy scenes so
+      // the network pipe stays saturated at the declared rate.
+      "-x264-params", "nal-hrd=cbr:force-cfr=1",
       "-pix_fmt", "yuv420p", "-g", String(gop),
       "-fps_mode", "cfr", "-r", String(OUTPUT_FPS),
       "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
@@ -617,7 +633,7 @@ class StreamManager {
 
     // Video input: HLS from mediamtx if available, else black frame to keep FB alive
     const videoInput = hlsPath
-      ? ["-fflags", "+nobuffer+genpts", "-flags", "low_delay", "-i", hlsPath]
+      ? ["-probesize", "32", "-analyzeduration", "0", "-fflags", "+nobuffer+genpts+flush_packets", "-flags", "low_delay", "-i", hlsPath]
       : ["-f", "lavfi", "-i", `color=c=black:s=1920x1080:r=${OUTPUT_FPS}`];
 
     const args = [
@@ -625,7 +641,8 @@ class StreamManager {
       "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
       "-map", "0:v:0", "-map", "1:a:0",
       "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-      "-b:v", bitrateK, "-maxrate", maxrateK, "-bufsize", bitrateK,
+      "-b:v", bitrateK, "-minrate", bitrateK, "-maxrate", maxrateK, "-bufsize", bitrateK,
+      "-x264-params", "nal-hrd=cbr:force-cfr=1",
       "-pix_fmt", "yuv420p", "-g", String(gop),
       "-fps_mode", "cfr", "-r", String(OUTPUT_FPS),
       "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
