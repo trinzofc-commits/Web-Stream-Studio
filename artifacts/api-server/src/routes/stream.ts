@@ -66,6 +66,40 @@ router.post("/stream/start", async (req, res): Promise<void> => {
   }
 });
 
+/**
+ * Start streaming in server-side compositing mode.
+ * FFmpeg reads video/image files from uploads/ directly — no browser needed.
+ * The stream continues even when the studio tab is closed.
+ */
+router.post("/stream/start-server", async (req, res): Promise<void> => {
+  const { sceneId } = req.body as { sceneId?: number };
+  if (!sceneId || typeof sceneId !== "number") {
+    res.status(400).json({ error: "sceneId is required" });
+    return;
+  }
+  try {
+    const parsed = StartStreamBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.message });
+      return;
+    }
+    const [outputConfig] = await db.select().from(outputConfigTable).limit(1);
+    const fps = outputConfig?.fps ?? 24;
+    const videoBitrate = outputConfig?.videoBitrate ?? 1500;
+    await streamManager.startServerSide(
+      sceneId,
+      parsed.data.rtmpUrl,
+      parsed.data.streamKey,
+      fps,
+      videoBitrate,
+    );
+    const stats = streamManager.getStats();
+    res.json(StartStreamResponse.parse(stats));
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to start server-side stream" });
+  }
+});
+
 router.post("/stream/stop", async (_req, res): Promise<void> => {
   streamManager.stop();
   const stats = streamManager.getStats();

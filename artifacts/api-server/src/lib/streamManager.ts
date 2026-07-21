@@ -5,6 +5,7 @@ import type { WebSocket } from "ws";
 import { logger } from "./logger.js";
 import { RtmpPublisher } from "./rtmpPublisher.js";
 import { getActiveStreams, hlsPlaylistPath, isStreamActive } from "./rtmpServer.js";
+import { buildServerCompositionArgs } from "./serverCompositor.js";
 
 export type StreamState = "idle" | "connecting" | "live" | "stopping" | "error" | "reconnecting";
 
@@ -66,6 +67,8 @@ class StreamManager {
 
   private pendingConfig: { rtmpUrl: string; streamKey: string; fps: number; videoBitrate: number } | null = null;
   private activeConfig: { rtmpUrl: string; streamKey: string; fps: number; videoBitrate: number } | null = null;
+  // When non-null, this stream is running in server-side compositing mode (no browser).
+  private serverSceneId: number | null = null;
 
   private totalSessions = 0;
   private totalUptimeSeconds = 0;
@@ -465,6 +468,153 @@ class StreamManager {
     }
   }
 
+  /**
+   * Start streaming by compositing scene sources directly on the server with
+   * FFmpeg — no browser tab required.  Supported sources: video files, images,
+   * and color fills stored in uploads/.  Unsupported sources (camera, browser,
+   * RTMP) are skipped; a black frame is used if nothing is renderable.
+   */
+  async startServerSide(
+    sceneId: number,
+    rtmpUrl: string,
+    streamKey: string,
+    fps = 24,
+    videoBitrate = 1500,
+  ): Promise<void> {
+    if (this.process) throw new Error("Stream already running");
+    if (!rtmpUrl || !streamKey) throw new Error("RTMP URL and stream key are required");
+
+    this.reconnectAttempts = 0;
+    this.serverSceneId = sceneId;
+    this.activeConfig = { rtmpUrl, streamKey, fps, videoBitrate };
+    this.stats = {
+      ...this.stats, state: "connecting", errorMessage: null,
+      droppedFrames: 0, totalFrames: 0, fps: null, bitrate: null,
+    };
+    this.emit();
+    logger.info({ sceneId, rtmpUrl }, "Server-side stream starting");
+
+    await this._doServerStream(sceneId, rtmpUrl, streamKey, fps, videoBitrate);
+  }
+
+  private async _doServerStream(
+    sceneId: number,
+    rtmpUrl: string,
+    streamKey: string,
+    fps: number,
+    videoBitrate: number,
+  ): Promise<void> {
+    const rawTarget = `${rtmpUrl.replace(/\/$/, "")}/${streamKey}`;
+
+    // Build FFmpeg composition from DB scene sources
+    let args: string[];
+    try {
+      const result = await buildServerCompositionArgs(sceneId, 1280, 720, fps, videoBitrate);
+      args = result.args;
+    } catch (err: any) {
+      this.stats.state = "error";
+      this.stats.errorMessage = `Failed to build composition: ${err?.message}`;
+      this.cleanup();
+      this.emit();
+      return;
+    }
+
+    // Connect RTMP publisher
+    const publisher = new RtmpPublisher();
+    this.publisher = publisher;
+    try {
+      await publisher.connect(rawTarget);
+    } catch (err: any) {
+      this.stats.state = "error";
+      this.stats.errorMessage = `RTMP connect failed: ${err?.message ?? String(err)}`;
+      logger.error({ err }, "Server-side RtmpPublisher failed to connect");
+      this.cleanup();
+      this.emit();
+      return;
+    }
+
+    publisher.on("error", (err: Error) => {
+      logger.error({ err }, "Server-side RtmpPublisher error");
+      if (this.stats.state === "live" || this.stats.state === "connecting") {
+        this._scheduleReconnect(`RTMP error: ${err.message}`);
+      }
+    });
+    publisher.on("close", () => {
+      logger.warn("Server-side RtmpPublisher socket closed");
+      if (this.stats.state === "live" || this.stats.state === "connecting") {
+        this._scheduleReconnect("RTMP connection lost");
+      }
+    });
+
+    try {
+      this.process = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+      this.startTime = Date.now();
+      this.sessionFpsSamples = [];
+      this.sessionBitrateSamples = [];
+
+      if (this.process.stdout) {
+        this.pipeFlvToPublisher(this.process.stdout as unknown as Readable, publisher);
+      }
+
+      this.process.stderr?.on("data", (d: Buffer) => {
+        const text = d.toString();
+        this.parseFFmpegStats(text);
+        logger.info({ ffmpeg: text.trim() }, "FFmpeg[server]");
+      });
+
+      this.process.on("close", (code) => {
+        const uptime = this.startTime ? Math.floor((Date.now() - this.startTime) / 1000) : 0;
+        this.totalUptimeSeconds += uptime;
+        if (this.stats.state === "stopping") {
+          this.stats.state = "idle";
+          this.serverSceneId = null;
+          this.cleanup();
+          this.emit();
+        } else if (this.stats.state !== "reconnecting") {
+          logger.error({ code }, "FFmpeg[server] exited unexpectedly");
+          this._scheduleReconnect(`FFmpeg exited (code ${code})`);
+        }
+      });
+
+      this.process.on("error", (err) => {
+        this.stats.state = "error";
+        this.stats.errorMessage = err.message;
+        logger.error({ err }, "FFmpeg[server] process error");
+        this.serverSceneId = null;
+        this.cleanup();
+        this.emit();
+      });
+
+      // Mark live after 3 s if FFmpeg hasn't reported fps yet
+      setTimeout(() => {
+        if (this.stats.state === "connecting" && this.process) {
+          this.stats.state = "live";
+          this.totalSessions++;
+          this.lastStreamAt = new Date().toISOString();
+          this.liveStartedAt = Date.now();
+          this.emit();
+        }
+      }, 3000);
+
+      this.statsInterval = setInterval(() => {
+        if (this.startTime) this.stats.uptimeSeconds = Math.floor((Date.now() - this.startTime) / 1000);
+        this.stats.memoryMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
+        this.emit();
+      }, 1000);
+
+      this.cpuInterval = setInterval(() => {
+        this.stats.cpuUsage = this.getCpuUsage();
+      }, 3000);
+
+    } catch (err: any) {
+      this.stats.state = "error";
+      this.stats.errorMessage = err.message || "Failed to start FFmpeg";
+      this.serverSceneId = null;
+      this.cleanup();
+      this.emit();
+    }
+  }
+
   private _scheduleReconnect(reason: string): void {
     if (this.stats.state === "reconnecting" || this.stats.state === "stopping") return;
 
@@ -486,6 +636,8 @@ class StreamManager {
     this._hardStop();
     this.emit();
 
+    const savedSceneId = this.serverSceneId;
+
     this.reconnectTimerId = setTimeout(async () => {
       this.reconnectTimerId = null;
       if (this.stats.state !== "reconnecting") return;
@@ -495,13 +647,23 @@ class StreamManager {
         this.emit();
         return;
       }
-      this.pendingConfig = { ...this.activeConfig };
+
       this.stats.state = "connecting";
       this.stats.errorMessage = null;
       this.stats.fps = null;
       this.stats.bitrate = null;
       this.emit();
 
+      // Server-side mode: restart FFmpeg directly, no browser needed
+      if (savedSceneId !== null) {
+        this.serverSceneId = savedSceneId;
+        const { rtmpUrl, streamKey, fps, videoBitrate } = this.activeConfig;
+        await this._doServerStream(savedSceneId, rtmpUrl, streamKey, fps, videoBitrate);
+        return;
+      }
+
+      // Browser mode: set pendingConfig and wait for browser to reconnect
+      this.pendingConfig = { ...this.activeConfig };
       this.connectTimeoutId = setTimeout(() => {
         this.connectTimeoutId = null;
         if (this.stats.state !== "connecting") return;
@@ -725,6 +887,7 @@ class StreamManager {
     this.activeConfig = null;
     this.liveStartedAt = null;
     this.hlsFallbackActive = false;
+    this.serverSceneId = null;
 
     if (!this.process) {
       this.pendingConfig = null;

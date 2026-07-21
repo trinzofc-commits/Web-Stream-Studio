@@ -6,9 +6,10 @@ import {
   useGetStreamConfig,
 } from '@workspace/api-client-react';
 import { Button } from '@/components/ui/button';
-import { Play, Square, RefreshCw } from 'lucide-react';
+import { Play, Square, RefreshCw, Server } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useStudio } from '@/context/StudioContext';
 
 interface Props {
   onSettingsOpen: () => void;
@@ -16,12 +17,14 @@ interface Props {
 
 export function BottomBar({ onSettingsOpen }: Props) {
   const queryClient = useQueryClient();
+  const { activeSceneId } = useStudio();
 
   const { data: streamStatus } = useGetStreamStatus({ query: { refetchInterval: 1000 } });
   const { data: streamConfig } = useGetStreamConfig();
 
   const startStream = useStartStream();
   const stopStream = useStopStream();
+  const [serverStreaming, setServerStreaming] = useState(false);
 
   // REC timer — tracks time since stream went live
   const [recSeconds, setRecSeconds] = useState(0);
@@ -56,19 +59,20 @@ export function BottomBar({ onSettingsOpen }: Props) {
     if (isLive || isConnecting) {
       stopStream.mutate(undefined, {
         onSuccess: () => {
+          setServerStreaming(false);
           queryClient.invalidateQueries({ queryKey: ['/api/stream/status'] });
           toast.info('Stream stopped');
         },
         onError: () => toast.error('Failed to stop stream'),
       });
     } else {
-      // Validate config before starting
       if (!streamConfig?.rtmpUrl || !streamConfig?.streamKey) {
         toast.error('Configure RTMP URL and Stream Key in Settings first', {
           action: { label: 'Settings', onClick: onSettingsOpen },
         });
         return;
       }
+      setServerStreaming(false);
       startStream.mutate(
         { data: { rtmpUrl: streamConfig.rtmpUrl, streamKey: streamConfig.streamKey } },
         {
@@ -79,6 +83,51 @@ export function BottomBar({ onSettingsOpen }: Props) {
           onError: (err: any) => toast.error(err?.message ?? 'Failed to start stream'),
         }
       );
+    }
+  };
+
+  /** Start server-side compositing — streams video files directly without browser rendering */
+  const handleServerStream = async () => {
+    if (isLive || isConnecting) {
+      stopStream.mutate(undefined, {
+        onSuccess: () => {
+          setServerStreaming(false);
+          queryClient.invalidateQueries({ queryKey: ['/api/stream/status'] });
+          toast.info('Stream stopped');
+        },
+        onError: () => toast.error('Failed to stop stream'),
+      });
+      return;
+    }
+    if (!streamConfig?.rtmpUrl || !streamConfig?.streamKey) {
+      toast.error('Configure RTMP URL and Stream Key in Settings first', {
+        action: { label: 'Settings', onClick: onSettingsOpen },
+      });
+      return;
+    }
+    if (!activeSceneId) {
+      toast.error('Select a scene first');
+      return;
+    }
+    try {
+      const res = await fetch('/api/stream/start-server', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sceneId: activeSceneId,
+          rtmpUrl: streamConfig.rtmpUrl,
+          streamKey: streamConfig.streamKey,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as any).error ?? 'Failed to start server stream');
+      }
+      setServerStreaming(true);
+      queryClient.invalidateQueries({ queryKey: ['/api/stream/status'] });
+      toast.success('Server-side stream starting — tab can now be closed');
+    } catch (err: any) {
+      toast.error(err?.message ?? 'Failed to start server stream');
     }
   };
 
@@ -136,17 +185,38 @@ export function BottomBar({ onSettingsOpen }: Props) {
           Settings
         </Button>
         <div className="w-px h-6 bg-border" />
+
+        {/* Server-side stream button — streams video files without browser rendering */}
         <Button
-          variant={isLive || isConnecting ? 'destructive' : 'default'}
+          variant={isLive && serverStreaming ? 'destructive' : 'outline'}
+          size="sm"
+          className="h-8 px-3 font-medium text-xs"
+          onClick={handleServerStream}
+          disabled={stopStream.isPending || (!isLive && !isConnecting && startStream.isPending)}
+          title="Stream directly from server (no browser needed — video files only)"
+        >
+          {isLive && serverStreaming ? (
+            <><Square className="w-3.5 h-3.5 mr-1.5 fill-current" /> Stop</>
+          ) : isConnecting && serverStreaming ? (
+            <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /></>
+          ) : (
+            <><Server className="w-3.5 h-3.5 mr-1.5" /> Server</>
+          )}
+        </Button>
+
+        <Button
+          variant={isLive && !serverStreaming ? 'destructive' : 'default'}
           size="sm"
           className="h-8 min-w-[130px] font-bold"
           onClick={handleStreamToggle}
           disabled={startStream.isPending || stopStream.isPending}
         >
-          {isLive ? (
+          {isLive && !serverStreaming ? (
             <><Square className="w-3.5 h-3.5 mr-2 fill-current" /> Stop Stream</>
-          ) : isConnecting ? (
+          ) : isConnecting && !serverStreaming ? (
             <><RefreshCw className="w-3.5 h-3.5 mr-2 animate-spin" /> Connecting…</>
+          ) : isLive && serverStreaming ? (
+            <><Play className="w-3.5 h-3.5 mr-2 fill-current" /> Start Stream</>
           ) : (
             <><Play className="w-3.5 h-3.5 mr-2 fill-current" /> Start Stream</>
           )}
