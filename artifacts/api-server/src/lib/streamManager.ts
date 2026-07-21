@@ -142,6 +142,17 @@ class StreamManager {
   }
 
   private async _doAttach(ws: WebSocket): Promise<void> {
+    // Allow browser to reclaim the stream while HLS/black-video fallback is running
+    if (this.hlsFallbackActive && this.stats.state === "live" && this.activeConfig) {
+      logger.info("Browser reconnected during server-side fallback — switching back to browser canvas");
+      this.hlsFallbackActive = false;
+      this._hardStop();
+      this.pendingConfig = { ...this.activeConfig };
+      this.stats.state = "connecting";
+      this.stats.errorMessage = null;
+      this.emit();
+    }
+
     if (this.stats.state !== "connecting" || !this.pendingConfig) {
       logger.warn("Stream client attached but not in connecting state — ignoring");
       ws.close();
@@ -588,14 +599,12 @@ class StreamManager {
       }
     }
 
-    if (!activeKey) {
-      logger.warn("Browser disconnected and no active RTMP source — stopping stream");
-      this.stop();
-      return;
+    const hlsPath = activeKey ? hlsPlaylistPath(activeKey) : null;
+    if (hlsPath) {
+      logger.info({ hlsPath }, "Browser disconnected — switching to HLS relay mode");
+    } else {
+      logger.warn("Browser disconnected, no RTMP source — holding stream alive with black video");
     }
-
-    const hlsPath = hlsPlaylistPath(activeKey);
-    logger.info({ hlsPath }, "Browser disconnected — switching to HLS relay mode");
 
     // Kill current browser-piped FFmpeg
     this._hardStop();
@@ -606,10 +615,13 @@ class StreamManager {
     const maxrateK = `${Math.round(videoBitrate * 1.2)}k`;
     const gop = OUTPUT_FPS * 2;
 
+    // Video input: HLS from mediamtx if available, else black frame to keep FB alive
+    const videoInput = hlsPath
+      ? ["-fflags", "+nobuffer+genpts", "-flags", "low_delay", "-i", hlsPath]
+      : ["-f", "lavfi", "-i", `color=c=black:s=1920x1080:r=${OUTPUT_FPS}`];
+
     const args = [
-      "-fflags", "+nobuffer+genpts",
-      "-flags", "low_delay",
-      "-i", hlsPath,
+      ...videoInput,
       "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
       "-map", "0:v:0", "-map", "1:a:0",
       "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
