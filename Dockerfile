@@ -43,8 +43,11 @@ RUN wget https://github.com/bluenviron/mediamtx/releases/download/v1.12.2/mediam
     tar -xzf /tmp/mediamtx.tar.gz -C /usr/local/bin/ && \
     rm /tmp/mediamtx.tar.gz
 
-# Bundled API server (esbuild output — no node_modules needed)
+# Bundled API server (esbuild output)
 COPY --from=builder /app/artifacts/api-server/dist ./dist
+
+# Install external dependencies that esbuild didn't bundle (like sharp and pg)
+RUN npm install sharp pg --quiet
 
 # Built frontend — Express serves this as static files in production
 COPY --from=builder /app/artifacts/livestream-studio/dist/public ./dist/public
