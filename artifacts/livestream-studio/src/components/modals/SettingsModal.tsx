@@ -66,10 +66,10 @@ export function SettingsModal({ open, onOpenChange }: Props) {
     streamKey: '',
   });
   const [outputData, setOutputData] = useState({
-    resolution: '1080p',
+    resolution: '720p',
     aspectRatio: 'landscape' as 'landscape' | 'portrait',
-    fps: 30,
-    videoBitrate: 2500,
+    fps: 24,
+    videoBitrate: 1500,
     audioBitrate: 128,
     encoder: 'H264',
     recordingEnabled: false,
@@ -103,10 +103,10 @@ export function SettingsModal({ open, onOpenChange }: Props) {
   useEffect(() => {
     if (outputConfig) {
       setOutputData({
-        resolution: (outputConfig as any).resolution ?? '1080p',
+        resolution: (outputConfig as any).resolution ?? '720p',
         aspectRatio: ((outputConfig as any).aspectRatio ?? 'landscape') as 'landscape' | 'portrait',
-        fps: outputConfig.fps ?? 30,
-        videoBitrate: outputConfig.videoBitrate ?? 2500,
+        fps: outputConfig.fps ?? 24,
+        videoBitrate: outputConfig.videoBitrate ?? 1500,
         audioBitrate: outputConfig.audioBitrate ?? 128,
         encoder: outputConfig.encoder ?? 'H264',
         recordingEnabled: outputConfig.recordingEnabled ?? false,

@@ -23,9 +23,10 @@ interface StreamStats {
 
 /**
  * OUTPUT_FPS — target frame-rate for the RTMP stream.
- * FFmpeg forces CFR output at this rate regardless of what MediaRecorder sends.
+ * 24fps strikes the best balance for Facebook Live on limited server resources:
+ * encoder CPU load is ~20% lower than 30fps while motion still looks smooth.
  */
-const OUTPUT_FPS = 30;
+const OUTPUT_FPS = 24;
 
 /** Maximum auto-reconnect attempts before giving up */
 const MAX_RECONNECT = 5;
@@ -107,7 +108,7 @@ class StreamManager {
     } catch { return 0; }
   }
 
-  async start(rtmpUrl: string, streamKey: string, fps = 30, videoBitrate = 2500): Promise<void> {
+  async start(rtmpUrl: string, streamKey: string, fps = 24, videoBitrate = 1500): Promise<void> {
     if (this.process) throw new Error("Stream already running");
     if (!rtmpUrl || !streamKey) throw new Error("RTMP URL and stream key are required");
 
@@ -634,7 +635,7 @@ class StreamManager {
     // Video input: HLS from mediamtx if available, else black frame to keep FB alive
     const videoInput = hlsPath
       ? ["-probesize", "32", "-analyzeduration", "0", "-fflags", "+nobuffer+genpts+flush_packets", "-flags", "low_delay", "-i", hlsPath]
-      : ["-f", "lavfi", "-i", `color=c=black:s=1920x1080:r=${OUTPUT_FPS}`];
+      : ["-f", "lavfi", "-i", `color=c=black:s=1280x720:r=${OUTPUT_FPS}`];
 
     const args = [
       ...videoInput,
