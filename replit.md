@@ -32,6 +32,7 @@ On startup the API server:
 | `DATABASE_URL` | Auto-provided by Replit — do not set manually |
 | `SESSION_SECRET` | Already configured as a Replit secret |
 | `PORT` | Set automatically per-artifact by Replit |
+| `MEDIAMTX_BIN` | Path to mediamtx binary — set to `/home/runner/workspace/bin/mediamtx` (downloaded on first setup; **note:** this binary is not committed to git and must be re-downloaded after a fresh clone — run `wget https://github.com/bluenviron/mediamtx/releases/download/v1.12.2/mediamtx_v1.12.2_linux_amd64.tar.gz -O /tmp/mediamtx.tar.gz && tar -xzf /tmp/mediamtx.tar.gz -C bin mediamtx` from the workspace root) |
 
 ## Schema
 

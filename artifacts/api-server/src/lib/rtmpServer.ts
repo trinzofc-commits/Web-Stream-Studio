@@ -10,8 +10,13 @@
  *                            └─ runOnPublish: FFmpeg → HLS files in /tmp/hls/live/
  *
  * mediamtx also exposes a REST API on :9997 so we can query active streams.
+ *
+ * mediamtx auto-download:
+ *   If MEDIAMTX_BIN does not exist, the server downloads v1.12.2 from GitHub
+ *   before starting. The binary is cached at the path specified by MEDIAMTX_BIN
+ *   so subsequent restarts skip the download.
  */
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, execSync, type ChildProcess } from "child_process";
 import path from "path";
 import fs from "fs";
 import { logger } from "./logger";
@@ -53,10 +58,40 @@ export function createRtmpServer(rtmpPort = 1935): void {
   fs.mkdirSync(HLS_ROOT, { recursive: true });
   fs.mkdirSync(path.join(HLS_ROOT, "live"), { recursive: true });
 
+  ensureMediamtxBinary();
   writeMediamtxConfig(rtmpPort);
   spawnMediamtx();
 
   logger.info({ rtmpPort }, "RTMP ingest server started (mediamtx)");
+}
+
+/**
+ * Downloads mediamtx v1.12.2 if the binary at MEDIAMTX_BIN doesn't exist.
+ * This makes the server self-contained after a fresh clone or container recycle.
+ */
+function ensureMediamtxBinary(): void {
+  if (MEDIAMTX_BIN === "mediamtx") {
+    // Using system PATH — assume it's installed externally.
+    return;
+  }
+  if (fs.existsSync(MEDIAMTX_BIN)) {
+    return;
+  }
+  logger.info({ path: MEDIAMTX_BIN }, "mediamtx binary not found — downloading…");
+  try {
+    const dir = path.dirname(MEDIAMTX_BIN);
+    fs.mkdirSync(dir, { recursive: true });
+    const tarball = "/tmp/mediamtx-setup.tar.gz";
+    execSync(
+      `wget -q https://github.com/bluenviron/mediamtx/releases/download/v1.12.2/mediamtx_v1.12.2_linux_amd64.tar.gz -O ${tarball}`,
+      { stdio: "inherit" },
+    );
+    execSync(`tar -xzf ${tarball} -C ${dir} mediamtx`, { stdio: "inherit" });
+    execSync(`chmod +x ${MEDIAMTX_BIN}`, { stdio: "inherit" });
+    logger.info({ path: MEDIAMTX_BIN }, "mediamtx binary downloaded successfully");
+  } catch (err) {
+    logger.error({ err }, "Failed to download mediamtx — RTMP ingest will be unavailable");
+  }
 }
 
 // ─── mediamtx lifecycle ───────────────────────────────────────────────────────
